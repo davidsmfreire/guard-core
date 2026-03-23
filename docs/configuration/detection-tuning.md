@@ -1,4 +1,5 @@
 ---
+
 title: Detection Tuning
 description: Guide to tuning guard-core's detection engine for optimal sensitivity vs performance tradeoffs
 keywords: detection tuning, sensitivity, performance, false positives, guard-core

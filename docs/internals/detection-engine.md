@@ -1,4 +1,5 @@
 ---
+
 title: Detection Engine
 description: PatternCompiler, ContentPreprocessor, SemanticAnalyzer, and PerformanceMonitor internals for guard-core's threat detection
 keywords: detection engine, pattern matching, semantic analysis, performance monitoring, guard-core
@@ -12,26 +13,31 @@ These components are orchestrated by the `SusPatternsManager` handler, which ada
 
 ## Architecture
 
-```text
-SusPatternsManager.detect(content, ip, context)
-  |
-  1. ContentPreprocessor.preprocess(content)
-  |     -> normalize_unicode
-  |     -> decode_common_encodings (URL + HTML, up to 3 iterations)
-  |     -> remove_null_bytes
-  |     -> remove_excessive_whitespace
-  |     -> truncate_safely (preserving attack regions)
-  |
-  2. Regex pattern matching (all compiled patterns)
-  |     -> PatternCompiler.create_safe_matcher() with timeout
-  |     -> PerformanceMonitor.record_metric() for each pattern
-  |
-  3. SemanticAnalyzer.analyze(content)
-  |     -> attack probability scoring
-  |     -> obfuscation detection
-  |     -> code injection risk analysis
-  |
-  4. Aggregate results -> return detection result dict
+```mermaid
+flowchart TD
+    DETECT["SusPatternsManager.detect()"]
+    PREPROCESS["1. Preprocess content"]
+    NORM["Normalize unicode"]
+    DECODE["Decode URL + HTML"]
+    NULL["Remove null bytes"]
+    WHITESPACE["Normalize whitespace"]
+    TRUNCATE["Truncate safely"]
+    REGEX["2. Regex matching"]
+    SAFE["Safe matcher with timeout"]
+    PERF["Record performance metrics"]
+    SEMANTIC["3. Semantic analysis"]
+    PROB["Attack probability scoring"]
+    OBFUSC["Obfuscation detection"]
+    INJECT["Code injection risk"]
+    AGG["4. Aggregate results"]
+
+    DETECT --> PREPROCESS
+    PREPROCESS --> NORM --> DECODE --> NULL --> WHITESPACE --> TRUNCATE
+    TRUNCATE --> REGEX
+    REGEX --> SAFE --> PERF
+    PERF --> SEMANTIC
+    SEMANTIC --> PROB --> OBFUSC --> INJECT
+    INJECT --> AGG
 ```
 
 ---

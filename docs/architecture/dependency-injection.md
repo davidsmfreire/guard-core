@@ -1,4 +1,5 @@
 ---
+
 title: Dependency Injection - Guard Core
 description: Context objects, HandlerInitializer wiring sequence, singleton handler lifecycle, and how adapters construct the guard-core dependency graph
 keywords: guard-core, dependency injection, context objects, HandlerInitializer, singleton handlers, lifecycle
@@ -183,37 +184,36 @@ Context Dependency Graph
 
 The contexts form a layered dependency graph. The adapter must construct them in bottom-up order:
 
-```text
-SecurityConfig + Logger
-        │
-        ├──► SecurityEventBus (needs agent_handler, config, geo_ip_handler)
-        │         │
-        │         ├──► MetricsCollector (needs agent_handler, config)
-        │         │
-        │         ├──► ValidationContext (needs config, logger, event_bus)
-        │         │         │
-        │         │         └──► RequestValidator
-        │         │
-        │         ├──► RoutingContext (needs config, logger, guard_decorator?)
-        │         │         │
-        │         │         └──► RouteConfigResolver
-        │         │
-        │         ├──► ResponseContext (needs config, logger, metrics_collector,
-        │         │         │           agent_handler?, guard_decorator?, response_factory?)
-        │         │         │
-        │         │         └──► ErrorResponseFactory
-        │         │
-        │         ├──► BypassContext (needs config, logger, event_bus,
-        │         │         │         route_resolver, response_factory, validator)
-        │         │         │
-        │         │         └──► BypassHandler
-        │         │
-        │         └──► BehavioralContext (needs config, logger, event_bus,
-        │                     │           guard_decorator?)
-        │                     │
-        │                     └──► BehavioralProcessor
-        │
-        └──► SecurityCheckPipeline (needs list of SecurityCheck instances)
+```mermaid
+graph TD
+    ROOT["SecurityConfig + Logger"]
+    EVT["SecurityEventBus"]
+    MET["MetricsCollector"]
+    VALCTX["ValidationContext"]
+    REQVAL["RequestValidator"]
+    ROUTCTX["RoutingContext"]
+    ROUTRES["RouteConfigResolver"]
+    RESPCTX["ResponseContext"]
+    ERRFACT["ErrorResponseFactory"]
+    BYPCTX["BypassContext"]
+    BYPH["BypassHandler"]
+    BEHCTX["BehavioralContext"]
+    BEHP["BehavioralProcessor"]
+    PIPE["SecurityCheckPipeline"]
+
+    ROOT --> EVT
+    EVT --> MET
+    EVT --> VALCTX
+    VALCTX --> REQVAL
+    EVT --> ROUTCTX
+    ROUTCTX --> ROUTRES
+    EVT --> RESPCTX
+    RESPCTX --> ERRFACT
+    EVT --> BYPCTX
+    BYPCTX --> BYPH
+    EVT --> BEHCTX
+    BEHCTX --> BEHP
+    ROOT --> PIPE
 ```
 
 ### Construction Order in an Adapter
@@ -362,45 +362,20 @@ guard-core uses module-level singleton instances for stateful handlers. These si
 
 ### Lifecycle Phases
 
-```text
-Phase 1: Module import
-    Singleton instances are created with default (empty) state.
-    No connections, no external calls.
+```mermaid
+flowchart TD
+    P1["Phase 1: Module Import"]
+    P2["Phase 2: Middleware Init"]
+    P3_REDIS["Phase 3a: Redis Init"]
+    P3_AGENT["Phase 3b: Agent Init"]
+    P4["Phase 4: Request Handling"]
+    P5["Phase 5: Shutdown"]
 
-Phase 2: Middleware __init__
-    Adapter constructs context objects and core modules.
-    References to singletons are established.
-    No async work yet.
-
-Phase 3: Startup (async)
-    HandlerInitializer.initialize_redis_handlers()
-        └── redis_handler.initialize()
-        └── cloud_handler.initialize_redis(redis_handler, ...)
-        └── ip_ban_manager.initialize_redis(redis_handler)
-        └── geo_ip_handler.initialize_redis(redis_handler)
-        └── rate_limit_handler.initialize_redis(redis_handler)
-        └── sus_patterns_handler.initialize_redis(redis_handler)
-
-    HandlerInitializer.initialize_agent_integrations()
-        └── agent_handler.start()
-        └── agent_handler.initialize_redis(redis_handler)
-        └── redis_handler.initialize_agent(agent_handler)
-        └── ip_ban_manager.initialize_agent(agent_handler)
-        └── rate_limit_handler.initialize_agent(agent_handler)
-        └── sus_patterns_handler.initialize_agent(agent_handler)
-        └── cloud_handler.initialize_agent(agent_handler)
-        └── geo_ip_handler.initialize_agent(agent_handler)
-        └── guard_decorator.initialize_agent(agent_handler)
-        └── DynamicRuleManager setup (if enabled)
-
-Phase 4: Request handling
-    All singletons are fully initialized.
-    Security checks access handlers through self.middleware properties.
-    Handlers manage their own state (Redis-backed or in-memory).
-
-Phase 5: Shutdown (async)
-    Adapter calls agent_handler.stop() and agent_handler.flush_buffer()
-    Redis connections are closed.
+    P1 --> P2
+    P2 --> P3_REDIS
+    P3_REDIS --> P3_AGENT
+    P3_AGENT --> P4
+    P4 --> P5
 ```
 
 ### Why Singletons?

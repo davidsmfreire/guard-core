@@ -1,13 +1,8 @@
 ---
+
 title: Building Adapters - Getting Started
 description: How to build a framework-specific adapter library on top of guard-core, translating framework types to guard-core protocols.
-keywords:
-- guard-core
-- adapter development
-- framework integration
-- protocol implementation
-- middleware
-- security engine
+keywords: guard-core, adapter development, framework integration, protocol implementation, middleware, security engine
 ---
 
 # Building Adapters
@@ -16,35 +11,14 @@ keywords:
 
 An adapter is a thin library that translates a web framework's native request/response types into the `GuardRequest` and `GuardResponse` protocols defined by `guard-core`. The adapter provides the glue between your framework (FastAPI, Flask, Django, or any other) and the security engine. All detection logic, rate limiting, IP management, behavioral tracking, cloud provider blocking, and pipeline orchestration live in `guard-core`. The adapter's only job is type translation and middleware wiring.
 
-```text
-┌──────────────────────┐
-│   Your Application   │
-│   (FastAPI / Flask)  │
-└─────────┬────────────┘
-          │
-┌─────────▼────────────┐
-│   Adapter Library     │    ← You build this
-│  (fastapi-guard, etc) │
-│                       │
-│  • Request wrapper    │
-│  • Response wrapper   │
-│  • Response factory   │
-│  • Middleware class    │
-└─────────┬────────────┘
-          │
-┌─────────▼────────────┐
-│     guard-core        │    ← Already built
-│                       │
-│  • SecurityConfig     │
-│  • SecurityPipeline   │
-│  • Detection engine   │
-│  • Rate limiting      │
-│  • IP ban management  │
-│  • Cloud IP blocking  │
-│  • Behavioral rules   │
-│  • Event bus/metrics  │
-│  • Handler system     │
-└──────────────────────┘
+```mermaid
+graph TD
+    APP["Your Application"]
+    ADAPTER["Adapter Library - you build this"]
+    CORE["guard-core - already built"]
+
+    APP --> ADAPTER
+    ADAPTER --> CORE
 ```
 
 ## Minimal Adapter Structure

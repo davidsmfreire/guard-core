@@ -1,14 +1,8 @@
 ---
+
 title: Implementing GuardResponse and GuardResponseFactory
 description: How to implement the GuardResponse and GuardResponseFactory protocols to create framework-native responses from guard-core security checks.
-keywords:
-- guard-core
-- GuardResponse
-- GuardResponseFactory
-- response protocol
-- adapter
-- error response
-- redirect
+keywords: guard-core, GuardResponse, GuardResponseFactory, response protocol, adapter, error response, redirect
 ---
 
 # Implementing GuardResponse and GuardResponseFactory

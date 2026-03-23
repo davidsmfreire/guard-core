@@ -1,4 +1,5 @@
 ---
+
 title: Handlers
 description: API reference for guard-core's handler classes including IPBanManager, RateLimitManager, CloudManager, and others
 keywords: handlers, ip ban, rate limit, cloud, redis, security headers, guard-core

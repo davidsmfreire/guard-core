@@ -1,4 +1,5 @@
 ---
+
 title: Utilities API - Guard Core
 description: Helper functions and utilities for logging, security checks, and request handling in guard-core
 keywords: security utilities, logging functions, security checks, request handling, guard-core
@@ -23,18 +24,18 @@ def setup_custom_logging(
 ) -> logging.Logger:
     """
     Setup custom logging for Guard Core.
-    
+
     Configures a hierarchical logger that outputs to both console and file.
     Console output is ALWAYS enabled for visibility.
     File output is optional for persistence.
-    
+
     Args:
         log_file: Optional path to log file. If None, only console output is enabled.
                   If provided, creates the directory if it doesn't exist.
-    
+
     Returns:
         logging.Logger: Configured logger with namespace "guard_core"
-    
+
     Note: This function is synchronous (not async).
     """
 ```

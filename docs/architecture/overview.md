@@ -1,4 +1,5 @@
 ---
+
 title: Architecture Overview - Guard Core
 description: Deep technical overview of guard-core's modular architecture, request lifecycle, module map, and design principles for adapter developers
 keywords: guard-core, architecture, module map, request lifecycle, design principles, dependency injection, security engine
@@ -16,55 +17,16 @@ This document covers the ecosystem architecture, module map, request lifecycle, 
 Ecosystem Architecture
 ----------------------
 
-```text
-┌──────────────────────────────────────────────────────────────────────┐
-│                         End-User Application                         │
-│                                                                      │
-│  app = FastAPI()                                                     │
-│  app.add_middleware(SecurityMiddleware, config=SecurityConfig(...))   │
-└──────────────────────────────────┬───────────────────────────────────┘
-                                   │
-                    ┌──────────────▼──────────────┐
-                    │   Framework-Specific Adapter  │
-                    │   (e.g. fastapi-guard)        │
-                    │                               │
-                    │  - Wraps native Request into  │
-                    │    GuardRequest               │
-                    │  - Implements GuardResponse    │
-                    │    + GuardResponseFactory      │
-                    │  - Implements                  │
-                    │    GuardMiddlewareProtocol     │
-                    └──────────────┬────────────────┘
-                                   │
-                    ┌──────────────▼──────────────┐
-                    │        guard-core Engine      │
-                    │                               │
-                    │  SecurityCheckPipeline         │
-                    │  SecurityEventBus              │
-                    │  MetricsCollector              │
-                    │  ErrorResponseFactory          │
-                    │  RouteConfigResolver           │
-                    │  RequestValidator              │
-                    │  BypassHandler                 │
-                    │  BehavioralProcessor           │
-                    │  HandlerInitializer            │
-                    │                               │
-                    │  Handlers:                     │
-                    │    ip_ban_manager              │
-                    │    rate_limit_handler          │
-                    │    cloud_handler               │
-                    │    sus_patterns_handler        │
-                    │    redis_handler               │
-                    │    security_headers_manager    │
-                    └──────────────┬────────────────┘
-                                   │
-                    ┌──────────────▼──────────────┐
-                    │       External Services       │
-                    │                               │
-                    │  Redis (distributed state)    │
-                    │  Guard Agent (telemetry)      │
-                    │  GeoIP databases              │
-                    └───────────────────────────────┘
+```mermaid
+graph TD
+    APP["End-User Application"]
+    ADAPTER["Framework Adapter"]
+    ENGINE["guard-core Engine"]
+    EXTERNAL["External Services"]
+
+    APP --> ADAPTER
+    ADAPTER --> ENGINE
+    ENGINE --> EXTERNAL
 ```
 
 The adapter is the **only layer** that knows about the web framework. guard-core never imports FastAPI, Flask, Django, or any other framework.
@@ -138,79 +100,30 @@ Request Lifecycle
 
 This is the complete path a request takes through the engine, from the adapter's perspective:
 
-```text
-Native Request (e.g. Starlette Request)
-    │
-    ▼
-┌─────────────────────────────────┐
-│ 1. Adapter wraps into           │
-│    GuardRequest                 │
-└────────────────┬────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────┐
-│ 2. BypassHandler.               │
-│    handle_passthrough()         │
-│    - No client host? Pass.      │
-│    - Path excluded? Pass.       │
-└────────────────┬────────────────┘
-                 │ (None = continue)
-                 ▼
-┌─────────────────────────────────┐
-│ 3. RouteConfigResolver.         │
-│    get_route_config()           │
-│    - Resolves decorator config  │
-│    - Stored on request.state    │
-└────────────────┬────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────┐
-│ 4. BypassHandler.               │
-│    handle_security_bypass()     │
-│    - Route bypasses all checks? │
-│      Pass through.              │
-└────────────────┬────────────────┘
-                 │ (None = continue)
-                 ▼
-┌─────────────────────────────────┐
-│ 5. SecurityCheckPipeline.       │
-│    execute()                    │
-│    - 17 checks in order         │
-│    - First non-None response    │
-│      short-circuits             │
-└────────────────┬────────────────┘
-                 │ (None = all passed)
-                 ▼
-┌─────────────────────────────────┐
-│ 6. BehavioralProcessor.         │
-│    process_usage_rules()        │
-│    - Pre-handler behavioral     │
-│      tracking                   │
-└────────────────┬────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────┐
-│ 7. call_next(request)           │
-│    - Framework handles request  │
-│    - Returns native response    │
-└────────────────┬────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────┐
-│ 8. ErrorResponseFactory.        │
-│    process_response()           │
-│    - Behavioral return rules    │
-│    - Metrics collection         │
-│    - Security headers           │
-│    - CORS headers               │
-│    - Custom response modifier   │
-└────────────────┬────────────────┘
-                 │
-                 ▼
-            GuardResponse
-                 │
-                 ▼
-    Adapter unwraps into native response
+```mermaid
+flowchart TD
+    NATIVE["Native Request"]
+    WRAP["1. Wrap into GuardRequest"]
+    BYPASS1["2. Handle passthrough"]
+    ROUTE["3. Resolve route config"]
+    BYPASS2["4. Handle security bypass"]
+    PIPELINE["5. Execute security pipeline"]
+    BEHAVIORAL["6. Process usage rules"]
+    CALLNEXT["7. Call next handler"]
+    RESPONSE["8. Process response"]
+    GUARD_RESP["GuardResponse"]
+    UNWRAP["Unwrap to native response"]
+
+    NATIVE --> WRAP
+    WRAP --> BYPASS1
+    BYPASS1 -- "None = continue" --> ROUTE
+    ROUTE --> BYPASS2
+    BYPASS2 -- "None = continue" --> PIPELINE
+    PIPELINE -- "None = all passed" --> BEHAVIORAL
+    BEHAVIORAL --> CALLNEXT
+    CALLNEXT --> RESPONSE
+    RESPONSE --> GUARD_RESP
+    GUARD_RESP --> UNWRAP
 ```
 
 !!! important "The adapter orchestrates this flow"

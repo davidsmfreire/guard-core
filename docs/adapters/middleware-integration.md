@@ -1,15 +1,8 @@
 ---
+
 title: Middleware Integration
 description: How to wire guard-core's security pipeline into your framework's middleware system, including initialization, dispatch, and CORS handling.
-keywords:
-- guard-core
-- middleware
-- dispatch
-- initialization
-- SecurityCheckPipeline
-- HandlerInitializer
-- CORS
-- adapter
+keywords: guard-core, middleware, dispatch, initialization, SecurityCheckPipeline, HandlerInitializer, CORS, adapter
 ---
 
 # Middleware Integration

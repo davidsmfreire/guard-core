@@ -1,4 +1,5 @@
 ---
+
 title: Security Pipeline - Guard Core
 description: Deep dive into the SecurityCheckPipeline chain of responsibility, all 17 security checks in execution order, the SecurityCheck base class, and extending the pipeline
 keywords: guard-core, security pipeline, chain of responsibility, security checks, SecurityCheck, SecurityCheckPipeline

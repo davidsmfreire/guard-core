@@ -1,14 +1,8 @@
 ---
+
 title: Testing Adapters
 description: How to test guard-core adapters using mock objects, check-level unit tests, wrapper verification, and integration testing patterns.
-keywords:
-- guard-core
-- testing
-- MockGuardRequest
-- MockGuardResponse
-- adapter testing
-- security checks
-- integration tests
+keywords: guard-core, testing, MockGuardRequest, MockGuardResponse, adapter testing, security checks, integration tests
 ---
 
 # Testing Adapters

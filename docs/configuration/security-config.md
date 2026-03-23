@@ -1,4 +1,5 @@
 ---
+
 title: SecurityConfig Reference
 description: Complete reference for every SecurityConfig field in guard-core, grouped by category with types, defaults, and descriptions
 keywords: security config, configuration, pydantic, guard-core

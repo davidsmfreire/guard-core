@@ -1,4 +1,5 @@
 ---
+
 title: Logging Configuration
 description: Configuring log levels, formats, file output, and the JsonFormatter in guard-core
 keywords: logging, json formatter, log levels, security events, guard-core

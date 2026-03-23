@@ -1,4 +1,5 @@
 ---
+
 title: Security Decorators API - Guard Core
 description: API reference for guard-core's security decorator system including SecurityDecorator, RouteConfig, and all mixins
 keywords: security decorators, guard-core, route config, access control, authentication

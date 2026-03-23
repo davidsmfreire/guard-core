@@ -1,4 +1,5 @@
 ---
+
 title: Event System - Guard Core
 description: SecurityEventBus and MetricsCollector deep dive -- event types, metric types, agent integration, and how adapters hook into the event system
 keywords: guard-core, events, SecurityEventBus, MetricsCollector, telemetry, security events, metrics
@@ -203,21 +204,22 @@ await self.metrics_collector.send_metric(
 
 ### Event Flow Diagram
 
-```text
-SecurityCheck.send_event()
-        │
-        ▼
-SecurityEventBus.send_middleware_event()
-        │
-        ├── Extract client IP (proxy-aware)
-        ├── Resolve country (GeoIP)
-        ├── Build SecurityEvent
-        │
-        ▼
-AgentHandlerProtocol.send_event()
-        │
-        ▼
-Guard Agent SaaS Platform
+```mermaid
+flowchart TD
+    CHECK["SecurityCheck.send_event()"]
+    BUS["SecurityEventBus"]
+    EXTRACT["Extract client IP"]
+    RESOLVE["Resolve country via GeoIP"]
+    BUILD["Build SecurityEvent"]
+    AGENT["AgentHandler.send_event()"]
+    PLATFORM["Guard Agent Platform"]
+
+    CHECK --> BUS
+    BUS --> EXTRACT
+    EXTRACT --> RESOLVE
+    RESOLVE --> BUILD
+    BUILD --> AGENT
+    AGENT --> PLATFORM
 ```
 
 ### Disabling Events and Metrics

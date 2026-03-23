@@ -1,4 +1,5 @@
 ---
+
 title: Guard Core - Framework-Agnostic Security Engine for Python
 description: The protocol-based security engine that powers framework-specific adapters like fastapi-guard, flaskapi-guard, and djapi-guard
 keywords: guard-core, security engine, python, protocol-based, adapter development, middleware engine
@@ -17,21 +18,15 @@ Guard Core
 
 `guard-core` is the **framework-agnostic security engine** that provides IP control, rate limiting, penetration detection, security headers, and behavioral analysis through a protocol-based architecture. It is designed to be consumed by **framework-specific adapters** -- not directly by end users.
 
-```text
-                          +------------------+
-                          |    guard-core    |
-                          |  (this library)  |
-                          +--------+---------+
-                                   |
-                   +---------------+---------------+
-                   |               |               |
-            +------+------+ +-----+------+ +------+------+
-            | fastapi-guard| | flaskapi-guard| | djapi-guard |
-            +------+------+ +------+------+ +------+------+
-                   |               |               |
-            +------+------+ +-----+------+ +------+------+
-            |  FastAPI App | |  Flask App  | |  Django App |
-            +--------------+ +------------+ +-------------+
+```mermaid
+graph TD
+    GC["guard-core"]
+    GC --> FG["fastapi-guard"]
+    GC --> FlG["flaskapi-guard"]
+    GC --> DG["djapi-guard"]
+    FG --> FA["FastAPI App"]
+    FlG --> FlA["Flask App"]
+    DG --> DA["Django App"]
 ```
 
 Adapter developers implement three protocols -- `GuardRequest`, `GuardResponse`, and `GuardResponseFactory` -- to bridge their framework's native objects into `guard-core`'s security pipeline. Everything else (17 security checks, the detection engine, Redis state management, event telemetry) works out of the box.

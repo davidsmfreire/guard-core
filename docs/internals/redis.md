@@ -1,4 +1,5 @@
 ---
+
 title: Redis Integration
 description: RedisManager internals for connection pooling, auto-reconnection, safe operations, and key namespacing in guard-core
 keywords: redis, connection pooling, distributed state, key namespacing, guard-core

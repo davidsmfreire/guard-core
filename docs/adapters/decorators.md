@@ -1,15 +1,8 @@
 ---
+
 title: Decorator System
 description: How guard-core's decorator system provides per-route security configuration, and how adapters expose it to their users.
-keywords:
-- guard-core
-- decorators
-- RouteConfig
-- SecurityDecorator
-- per-route security
-- access control
-- rate limiting
-- behavioral rules
+keywords: guard-core, decorators, RouteConfig, SecurityDecorator, per-route security, access control, rate limiting, behavioral rules
 ---
 
 # Decorator System

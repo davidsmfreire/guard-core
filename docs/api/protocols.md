@@ -1,4 +1,5 @@
 ---
+
 title: Protocols
 description: The protocol interfaces that adapters must implement to integrate guard-core with any Python web framework
 keywords: protocols, guard request, guard response, middleware protocol, adapter development, guard-core

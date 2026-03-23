@@ -1,4 +1,5 @@
 ---
+
 title: Behavioral Analysis
 description: BehaviorTracker and BehavioralProcessor internals for usage monitoring, return pattern detection, and action enforcement in guard-core
 keywords: behavioral analysis, behavior tracking, usage rules, return patterns, guard-core

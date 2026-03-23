@@ -1,4 +1,5 @@
 ---
+
 title: Installation - Guard Core
 description: How to add guard-core as a dependency in your adapter library and set up a contributor development environment
 keywords: guard-core, installation, adapter dependency, development setup, python security engine

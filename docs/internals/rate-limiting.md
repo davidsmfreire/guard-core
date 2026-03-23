@@ -1,4 +1,5 @@
 ---
+
 title: Rate Limiting
 description: RateLimitManager internals, sliding window algorithm, Redis Lua scripts, and per-endpoint rate limits in guard-core
 keywords: rate limiting, sliding window, redis, lua script, guard-core

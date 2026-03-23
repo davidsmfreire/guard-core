@@ -1,13 +1,8 @@
 ---
+
 title: Implementing GuardRequest
 description: How to wrap your framework's request object to satisfy the GuardRequest protocol defined by guard-core.
-keywords:
-- guard-core
-- GuardRequest
-- request protocol
-- adapter development
-- request wrapper
-- protocol implementation
+keywords: guard-core, GuardRequest, request protocol, adapter development, request wrapper, protocol implementation
 ---
 
 # Implementing GuardRequest

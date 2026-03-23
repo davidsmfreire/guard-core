@@ -1,4 +1,5 @@
 ---
+
 title: Protocol Reference - Guard Core
 description: Complete reference for GuardRequest, GuardResponse, GuardResponseFactory, and GuardMiddlewareProtocol -- the contracts adapter developers must implement
 keywords: guard-core, protocols, GuardRequest, GuardResponse, GuardResponseFactory, adapter contract, python protocol

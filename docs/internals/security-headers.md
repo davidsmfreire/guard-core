@@ -1,4 +1,5 @@
 ---
+
 title: Security Headers
 description: SecurityHeadersManager internals for CSP, HSTS, CORS, and default security headers in guard-core
 keywords: security headers, csp, hsts, cors, owasp, guard-core

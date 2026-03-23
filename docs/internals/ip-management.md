@@ -1,4 +1,5 @@
 ---
+
 title: IP Management
 description: IPBanManager internals, IP allow/block logic, CIDR support, and country-based filtering in guard-core
 keywords: ip banning, ip management, blacklist, whitelist, cidr, guard-core
@@ -77,14 +78,25 @@ The function `is_ip_allowed()` in `guard_core.utils` implements the global IP ev
 
 ### Evaluation Order
 
-```text
-is_ip_allowed(ip, config, geo_ip_handler)
-  |
-  1. Blacklist check -> if ip in blacklist: return False
-  2. Whitelist check -> if whitelist exists and ip not in whitelist: return False
-  3. Country check   -> if blocked_countries and country is blocked: return False
-  4. Cloud check     -> if block_cloud_providers and ip is cloud: return False
-  5. return True
+```mermaid
+flowchart TD
+    START["is_ip_allowed()"]
+    BL{"1. IP in blacklist?"}
+    WL{"2. IP not in whitelist?"}
+    CC{"3. Country blocked?"}
+    CL{"4. Cloud provider blocked?"}
+    ALLOW["return True"]
+    DENY["return False"]
+
+    START --> BL
+    BL -- Yes --> DENY
+    BL -- No --> WL
+    WL -- Yes --> DENY
+    WL -- No --> CC
+    CC -- Yes --> DENY
+    CC -- No --> CL
+    CL -- Yes --> DENY
+    CL -- No --> ALLOW
 ```
 
 ### Blacklist Check

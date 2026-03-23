@@ -1,4 +1,5 @@
 ---
+
 title: Security Checks Framework
 description: SecurityCheck base class, SecurityCheckPipeline, and helper functions for building custom security checks in guard-core
 keywords: security checks, pipeline, chain of responsibility, guard-core, adapter development
@@ -96,23 +97,31 @@ class SecurityCheckPipeline:
 
 ### Execution Flow
 
-```text
-execute(request)
-  |
-  for each check in self.checks:
-  |   try:
-  |     response = await check.check(request)
-  |     if response is not None:
-  |       LOG "Request blocked by {check_name}"
-  |       return response
-  |   except Exception:
-  |     LOG error
-  |     if config.fail_secure:
-  |       return 500 error response
-  |     else:
-  |       continue
-  |
-  return None  (all checks passed)
+```mermaid
+flowchart TD
+    START["execute(request)"]
+    LOOP{"Next check?"}
+    RUN["await check.check(request)"]
+    RESP{"Response returned?"}
+    LOG_BLOCK["Log: blocked by check"]
+    RETURN_RESP["Return response"]
+    EXCEPTION{"Exception raised?"}
+    LOG_ERR["Log error"]
+    FAIL_SECURE{"fail_secure enabled?"}
+    RETURN_500["Return 500 error"]
+    CONTINUE["Continue to next check"]
+    ALL_PASSED["Return None"]
+
+    START --> LOOP
+    LOOP -- Yes --> RUN
+    RUN --> EXCEPTION
+    EXCEPTION -- No --> RESP
+    RESP -- Yes --> LOG_BLOCK --> RETURN_RESP
+    RESP -- No --> LOOP
+    EXCEPTION -- Yes --> LOG_ERR --> FAIL_SECURE
+    FAIL_SECURE -- Yes --> RETURN_500
+    FAIL_SECURE -- No --> CONTINUE --> LOOP
+    LOOP -- "No more checks" --> ALL_PASSED
 ```
 
 ### Error Handling
