@@ -1,0 +1,148 @@
+---
+title: Redis Integration
+description: RedisManager internals for connection pooling, auto-reconnection, safe operations, and key namespacing in guard-core
+keywords: redis, connection pooling, distributed state, key namespacing, guard-core
+---
+
+# Redis Integration
+
+Guard-core uses Redis for distributed state management across multiple application instances. The `RedisManager` handler provides connection management, namespaced key operations, and fault-tolerant wrappers.
+
+## RedisManager
+
+::: guard_core.handlers.redis_handler.RedisManager
+
+### Construction
+
+```python
+class RedisManager:
+    def __new__(cls, config: SecurityConfig) -> "RedisManager":
+        cls._instance = super().__new__(cls)
+        cls._instance.config = config
+        cls._instance._closed = False
+        cls._instance.agent_handler = None
+        return cls._instance
+```
+
+Unlike other handlers, `RedisManager` creates a new instance on every construction. The `redis_handler` module-level variable is the class itself (not an instance), allowing deferred instantiation with a config.
+
+### Connection Lifecycle
+
+**Initialize**:
+
+```python
+redis_manager = RedisManager(config)
+await redis_manager.initialize()
+```
+
+Creates a `redis.asyncio.Redis` connection from `config.redis_url` with `decode_responses=True`. Pings to verify connectivity. Raises `GuardRedisError(503)` on failure.
+
+**Close**:
+
+```python
+await redis_manager.close()
+```
+
+Closes the connection and sets `_closed = True`. Subsequent operations will raise `GuardRedisError`.
+
+### Connection Context Manager
+
+```python
+@asynccontextmanager
+async def get_connection(self) -> AsyncIterator[Redis]:
+```
+
+All operations use this context manager, which:
+
+1. Checks if the connection is closed.
+2. Auto-initializes if `_redis` is `None`.
+3. Yields the Redis connection.
+4. Catches `ConnectionError` and `AttributeError`, wrapping them in `GuardRedisError(503)`.
+
+### Safe Operations
+
+```python
+async def safe_operation(self, func, *args, **kwargs) -> Any
+```
+
+Wraps any async function that takes a Redis connection as its first argument. Returns `None` if Redis is disabled. Raises `GuardRedisError` on failure.
+
+---
+
+## Key Namespacing
+
+All keys are prefixed with `config.redis_prefix` (default: `"guard_core:"`) and organized by namespace:
+
+```text
+{redis_prefix}{namespace}:{key}
+```
+
+**Examples**:
+
+| Operation                          | Redis Key                              |
+|------------------------------------|----------------------------------------|
+| Banned IP lookup                   | `guard_core:banned_ips:192.168.1.1`    |
+| Rate limit counter                 | `guard_core:rate_limit:rate:10.0.0.1`  |
+| Cloud IP cache                     | `guard_core:cloud_ranges:AWS`          |
+| Custom patterns                    | `guard_core:patterns:custom`           |
+| Security headers config            | `guard_core:security_headers:csp_config` |
+| Behavioral tracking                | `guard_core:behavior_usage:{key}:{ts}` |
+
+### Key Operations
+
+| Method                              | Description                                   |
+|-------------------------------------|-----------------------------------------------|
+| `get_key(namespace, key)`           | Get a namespaced key value                    |
+| `set_key(namespace, key, value, ttl)` | Set with optional TTL (uses `SETEX` if TTL provided) |
+| `incr(namespace, key, ttl)`         | Atomic increment with optional TTL            |
+| `exists(namespace, key)`            | Check key existence                           |
+| `delete(namespace, key)`            | Delete a single key                           |
+| `keys(pattern)`                     | Find keys matching a pattern (auto-prefixed)  |
+| `delete_pattern(pattern)`           | Delete all keys matching a pattern            |
+
+All methods return `None` when Redis is disabled (`config.enable_redis = False`), allowing callers to fall back to local state without error handling.
+
+---
+
+## Fault Tolerance
+
+### Graceful Degradation
+
+When Redis is unavailable, guard-core falls back to in-memory state for all subsystems:
+
+| Subsystem          | Redis State                    | Fallback                        |
+|--------------------|--------------------------------|---------------------------------|
+| Rate limiting      | Sorted sets per IP             | In-memory `defaultdict(deque)`  |
+| IP banning         | Key-value with TTL             | `TTLCache(maxsize=10000)`       |
+| Cloud IP ranges    | Cached CIDR strings            | Direct HTTP fetch + memory      |
+| Suspicious patterns| Custom pattern list             | Built-in patterns only          |
+| Security headers   | Configuration cache            | In-memory configuration         |
+
+### Error Handling
+
+`GuardRedisError` is raised with a `status_code` and `detail`:
+
+```python
+class GuardRedisError(GuardCoreError):
+    def __init__(self, status_code: int, detail: str) -> None:
+        self.status_code = status_code
+        self.detail = detail
+```
+
+Adapters should catch `GuardRedisError` during initialization and handle it according to their framework's error model.
+
+---
+
+## Configuration
+
+| Field          | Type          | Default                   | Description                              |
+|----------------|---------------|---------------------------|------------------------------------------|
+| `enable_redis` | `bool`        | `True`                    | Master switch for Redis integration      |
+| `redis_url`    | `str \| None` | `"redis://localhost:6379"`| Redis connection URL                     |
+| `redis_prefix` | `str`         | `"guard_core:"`           | Key prefix for namespace isolation       |
+
+### Adapter Considerations
+
+- Set `redis_prefix` to a unique value per application to avoid key collisions when sharing a Redis instance.
+- When `enable_redis` is `False`, all `RedisManager` methods return `None` without attempting connections.
+- The `redis_url` can include authentication: `"redis://user:password@host:port/db"`.

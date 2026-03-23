@@ -1,0 +1,166 @@
+site_name: Guard Core
+site_description: Framework-agnostic security library for Python web applications
+site_url: https://rennf93.github.io/guard-core/latest/
+repo_name: rennf93/guard-core
+repo_url: https://github.com/rennf93/guard-core
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: dark-blue
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: dark-blue
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - content.code.annotate
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - search.highlight
+    - search.share
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+  logo: assets/logo.svg
+  favicon: assets/favicon.png
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Architecture:
+    - Overview: architecture/overview.md
+    - Protocol Layer: architecture/protocols.md
+    - Security Pipeline: architecture/pipeline.md
+    - Event System: architecture/events.md
+    - Dependency Injection: architecture/dependency-injection.md
+  - Building Adapters:
+    - Getting Started: adapters/getting-started.md
+    - Implementing GuardRequest: adapters/guard-request.md
+    - Implementing GuardResponse: adapters/guard-response.md
+    - Middleware Integration: adapters/middleware-integration.md
+    - Decorator System: adapters/decorators.md
+    - Testing Your Adapter: adapters/testing.md
+  - Engine Internals:
+    - Checks Framework: internals/checks.md
+    - Check Implementations: internals/check-implementations.md
+    - IP Management: internals/ip-management.md
+    - Rate Limiting: internals/rate-limiting.md
+    - Detection Engine: internals/detection-engine.md
+    - Cloud Providers: internals/cloud-providers.md
+    - Security Headers: internals/security-headers.md
+    - Behavioral Analysis: internals/behavioral.md
+    - Redis Integration: internals/redis.md
+  - Configuration:
+    - SecurityConfig Reference: configuration/security-config.md
+    - Detection Tuning: configuration/detection-tuning.md
+    - Logging: configuration/logging.md
+  - API Reference:
+    - Protocols: api/protocols.md
+    - Models: api/models.md
+    - Handlers: api/handlers.md
+    - Detection Engine: api/detection-engine.md
+    - Decorators: api/decorators.md
+    - Utilities: api/utilities.md
+  - Release Notes: release-notes.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+  - def_list
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [guard_core]
+          options:
+            show_source: true
+            show_root_heading: true
+            heading_level: 2
+            docstring_style: google
+            show_if_no_docstring: true
+            filters: ["!^_"]
+            merge_init_into_class: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/rennf93/guard-core
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/guard-core/
+
+  analytics:
+    provider: google
+    property: !ENV GOOGLE_ANALYTICS_KEY
+    feedback:
+      title: Was this page helpful?
+      ratings:
+        - icon: material/emoticon-happy-outline
+          name: This page was helpful
+          data: 1
+          note: >-
+            Thanks for your feedback!
+        - icon: material/emoticon-sad-outline
+          name: This page could be improved
+          data: 0
+          note: >-
+            Thanks for your feedback! Help us improve by using our
+            <a href="https://github.com/rennf93/guard-core/issues/new">issue tracker</a>.
+
+  generator: false
+  meta:
+    - property: og:type
+      content: website
+    - property: og:title
+      content: Guard Core - Framework-Agnostic Security Library for Python
+    - property: og:description
+      content: Comprehensive security library for Python web applications providing IP control, request logging, and penetration detection
+    - property: og:image
+      content: https://rennf93.github.io/guard-core/assets/big_logo.svg
+    - name: keywords
+      content: guard-core, security, python, ip control, rate limiting, penetration detection
+
+  version:
+    provider: mike
+    default: latest
+    version_selector: true
+    json_file: /guard-core/versions.json
+
+  author:
+    name: Renzo Franceschini
+    url: https://github.com/rennf93
+
+copyright: Guard Core by
+
+extra_css:
+  - css/custom.css
