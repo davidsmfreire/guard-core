@@ -4,7 +4,6 @@ import pytest
 
 from guard_core.core.checks.base import SecurityCheck
 from guard_core.core.checks.pipeline import SecurityCheckPipeline
-from tests.conftest import MockGuardRequest, MockGuardResponse
 
 
 class MockCheck(SecurityCheck):
@@ -19,7 +18,7 @@ class MockCheck(SecurityCheck):
 
     async def check(self, request):
         if self._should_block:
-            return MockGuardResponse(content="Blocked", status_code=403)
+            return Mock(status_code=403)
         return None
 
 
@@ -44,165 +43,204 @@ def mock_middleware() -> Mock:
     middleware.config.passive_mode = False
     middleware.logger = Mock()
     middleware.event_bus = Mock()
-    middleware.create_error_response = AsyncMock(
-        return_value=MockGuardResponse(content="Error", status_code=500)
-    )
+    middleware.create_error_response = AsyncMock(return_value=Mock(status_code=500))
     return middleware
 
 
 @pytest.fixture
-def mock_req() -> MockGuardRequest:
-    return MockGuardRequest(path="/test", method="GET")
+def mock_request() -> Mock:
+    request = Mock()
+    request.url_path = "/test"
+    request.method = "GET"
+    return request
 
 
-class TestSecurityCheckPipeline:
-    def test_pipeline_initialization(self, mock_middleware: Mock) -> None:
-        check1 = MockCheck(mock_middleware, "check1")
-        check2 = MockCheck(mock_middleware, "check2")
+def test_pipeline_initialization(mock_middleware: Mock) -> None:
+    check1 = MockCheck(mock_middleware, "check1")
+    check2 = MockCheck(mock_middleware, "check2")
 
-        pipeline = SecurityCheckPipeline([check1, check2])
+    pipeline = SecurityCheckPipeline([check1, check2])
 
-        assert len(pipeline) == 2
-        assert pipeline.get_check_names() == ["check1", "check2"]
+    assert len(pipeline) == 2
+    assert pipeline.get_check_names() == ["check1", "check2"]
 
-    @pytest.mark.asyncio
-    async def test_execute_all_checks_pass(
-        self, mock_middleware: Mock, mock_req: MockGuardRequest
-    ) -> None:
-        check1 = MockCheck(mock_middleware, "check1", should_block=False)
-        check2 = MockCheck(mock_middleware, "check2", should_block=False)
 
-        pipeline = SecurityCheckPipeline([check1, check2])
-        result = await pipeline.execute(mock_req)
+async def test_execute_all_checks_pass(
+    mock_middleware: Mock, mock_request: Mock
+) -> None:
+    check1 = MockCheck(mock_middleware, "check1", should_block=False)
+    check2 = MockCheck(mock_middleware, "check2", should_block=False)
 
-        assert result is None
+    pipeline = SecurityCheckPipeline([check1, check2])
+    result = await pipeline.execute(mock_request)
 
-    @pytest.mark.asyncio
-    async def test_execute_first_check_blocks(
-        self, mock_middleware: Mock, mock_req: MockGuardRequest
-    ) -> None:
-        check1 = MockCheck(mock_middleware, "check1", should_block=True)
-        check2 = MockCheck(mock_middleware, "check2", should_block=False)
+    assert result is None
 
-        pipeline = SecurityCheckPipeline([check1, check2])
-        result = await pipeline.execute(mock_req)
 
-        assert result is not None
-        assert result.status_code == 403
+async def test_execute_first_check_blocks(
+    mock_middleware: Mock, mock_request: Mock
+) -> None:
+    check1 = MockCheck(mock_middleware, "check1", should_block=True)
+    check2 = MockCheck(mock_middleware, "check2", should_block=False)
 
-    @pytest.mark.asyncio
-    async def test_execute_second_check_blocks(
-        self, mock_middleware: Mock, mock_req: MockGuardRequest
-    ) -> None:
-        check1 = MockCheck(mock_middleware, "check1", should_block=False)
-        check2 = MockCheck(mock_middleware, "check2", should_block=True)
+    pipeline = SecurityCheckPipeline([check1, check2])
+    result = await pipeline.execute(mock_request)
 
-        pipeline = SecurityCheckPipeline([check1, check2])
-        result = await pipeline.execute(mock_req)
+    assert result is not None
+    assert result.status_code == 403
 
-        assert result is not None
-        assert result.status_code == 403
 
-    @pytest.mark.asyncio
-    async def test_execute_with_exception_fail_open(
-        self, mock_middleware: Mock, mock_req: MockGuardRequest
-    ) -> None:
-        failing_check = FailingCheck(mock_middleware, "failing_check")
-        passing_check = MockCheck(mock_middleware, "passing_check", should_block=False)
+async def test_execute_second_check_blocks(
+    mock_middleware: Mock, mock_request: Mock
+) -> None:
+    check1 = MockCheck(mock_middleware, "check1", should_block=False)
+    check2 = MockCheck(mock_middleware, "check2", should_block=True)
 
-        mock_middleware.config.fail_secure = False
+    pipeline = SecurityCheckPipeline([check1, check2])
+    result = await pipeline.execute(mock_request)
 
-        pipeline = SecurityCheckPipeline([failing_check, passing_check])
-        result = await pipeline.execute(mock_req)
+    assert result is not None
+    assert result.status_code == 403
 
-        assert result is None
 
-    @pytest.mark.asyncio
-    async def test_execute_with_exception_fail_secure(
-        self, mock_middleware: Mock, mock_req: MockGuardRequest
-    ) -> None:
-        failing_check = FailingCheck(mock_middleware, "failing_check")
-        passing_check = MockCheck(mock_middleware, "passing_check", should_block=False)
+async def test_execute_with_exception_fail_open(
+    mock_middleware: Mock, mock_request: Mock
+) -> None:
+    failing_check = FailingCheck(mock_middleware, "failing_check")
+    passing_check = MockCheck(mock_middleware, "passing_check", should_block=False)
 
-        mock_middleware.config.fail_secure = True
+    mock_middleware.config.fail_secure = False
 
-        pipeline = SecurityCheckPipeline([failing_check, passing_check])
-        result = await pipeline.execute(mock_req)
+    pipeline = SecurityCheckPipeline([failing_check, passing_check])
+    result = await pipeline.execute(mock_request)
 
-        assert result is not None
-        assert result.status_code == 500
+    assert result is None
 
-    def test_add_check(self, mock_middleware: Mock) -> None:
-        check1 = MockCheck(mock_middleware, "check1")
-        check2 = MockCheck(mock_middleware, "check2")
 
-        pipeline = SecurityCheckPipeline([check1])
-        assert len(pipeline) == 1
+async def test_execute_with_exception_fail_secure(
+    mock_middleware: Mock, mock_request: Mock
+) -> None:
+    failing_check = FailingCheck(mock_middleware, "failing_check")
+    passing_check = MockCheck(mock_middleware, "passing_check", should_block=False)
 
-        pipeline.add_check(check2)
-        assert len(pipeline) == 2
-        assert pipeline.get_check_names() == ["check1", "check2"]
+    mock_middleware.config.fail_secure = True
 
-    def test_insert_check(self, mock_middleware: Mock) -> None:
-        check1 = MockCheck(mock_middleware, "check1")
-        check2 = MockCheck(mock_middleware, "check2")
-        check3 = MockCheck(mock_middleware, "check3")
+    pipeline = SecurityCheckPipeline([failing_check, passing_check])
+    result = await pipeline.execute(mock_request)
 
-        pipeline = SecurityCheckPipeline([check1, check3])
-        pipeline.insert_check(1, check2)
+    assert result is not None
+    assert result.status_code == 500
 
-        assert len(pipeline) == 3
-        assert pipeline.get_check_names() == ["check1", "check2", "check3"]
 
-    def test_remove_check_found(self, mock_middleware: Mock) -> None:
-        check1 = MockCheck(mock_middleware, "check1")
-        check2 = MockCheck(mock_middleware, "check2")
-        check3 = MockCheck(mock_middleware, "check3")
+async def test_execute_with_exception_no_fail_secure_attr(
+    mock_middleware: Mock, mock_request: Mock
+) -> None:
+    failing_check = FailingCheck(mock_middleware, "failing_check")
 
-        pipeline = SecurityCheckPipeline([check1, check2, check3])
-        result = pipeline.remove_check("check2")
+    if hasattr(mock_middleware.config, "fail_secure"):
+        delattr(mock_middleware.config, "fail_secure")
 
-        assert result is True
-        assert len(pipeline) == 2
-        assert pipeline.get_check_names() == ["check1", "check3"]
+    pipeline = SecurityCheckPipeline([failing_check])
+    result = await pipeline.execute(mock_request)
 
-    def test_remove_check_not_found(self, mock_middleware: Mock) -> None:
-        check1 = MockCheck(mock_middleware, "check1")
+    assert result is None
 
-        pipeline = SecurityCheckPipeline([check1])
-        result = pipeline.remove_check("nonexistent")
 
-        assert result is False
-        assert len(pipeline) == 1
+def test_add_check(mock_middleware: Mock) -> None:
+    check1 = MockCheck(mock_middleware, "check1")
+    check2 = MockCheck(mock_middleware, "check2")
 
-    def test_repr(self, mock_middleware: Mock) -> None:
-        check1 = MockCheck(mock_middleware, "check1")
-        check2 = MockCheck(mock_middleware, "check2")
+    pipeline = SecurityCheckPipeline([check1])
+    assert len(pipeline) == 1
 
-        pipeline = SecurityCheckPipeline([check1, check2])
-        repr_str = repr(pipeline)
+    pipeline.add_check(check2)
+    assert len(pipeline) == 2
+    assert pipeline.get_check_names() == ["check1", "check2"]
 
-        assert "SecurityCheckPipeline" in repr_str
-        assert "2 checks" in repr_str
-        assert "check1" in repr_str
-        assert "check2" in repr_str
 
-    @pytest.mark.parametrize(
-        "checks,expected_count",
-        [
-            ([], 0),
-            (["check1"], 1),
-            (["check1", "check2"], 2),
-            (["check1", "check2", "check3"], 3),
-        ],
-    )
-    def test_pipeline_various_sizes(
-        self, mock_middleware: Mock, checks: list[str], expected_count: int
-    ) -> None:
-        check_objects: list[SecurityCheck] = [
-            MockCheck(mock_middleware, name) for name in checks
-        ]
-        pipeline = SecurityCheckPipeline(check_objects)
+def test_insert_check(mock_middleware: Mock) -> None:
+    check1 = MockCheck(mock_middleware, "check1")
+    check2 = MockCheck(mock_middleware, "check2")
+    check3 = MockCheck(mock_middleware, "check3")
 
-        assert len(pipeline) == expected_count
-        assert pipeline.get_check_names() == checks
+    pipeline = SecurityCheckPipeline([check1, check3])
+    pipeline.insert_check(1, check2)
+
+    assert len(pipeline) == 3
+    assert pipeline.get_check_names() == ["check1", "check2", "check3"]
+
+
+def test_remove_check_found(mock_middleware: Mock) -> None:
+    check1 = MockCheck(mock_middleware, "check1")
+    check2 = MockCheck(mock_middleware, "check2")
+    check3 = MockCheck(mock_middleware, "check3")
+
+    pipeline = SecurityCheckPipeline([check1, check2, check3])
+    result = pipeline.remove_check("check2")
+
+    assert result is True
+    assert len(pipeline) == 2
+    assert pipeline.get_check_names() == ["check1", "check3"]
+
+
+def test_remove_check_not_found(mock_middleware: Mock) -> None:
+    check1 = MockCheck(mock_middleware, "check1")
+
+    pipeline = SecurityCheckPipeline([check1])
+    result = pipeline.remove_check("nonexistent")
+
+    assert result is False
+    assert len(pipeline) == 1
+
+
+def test_get_check_names(mock_middleware: Mock) -> None:
+    check1 = MockCheck(mock_middleware, "check1")
+    check2 = MockCheck(mock_middleware, "check2")
+
+    pipeline = SecurityCheckPipeline([check1, check2])
+    names = pipeline.get_check_names()
+
+    assert names == ["check1", "check2"]
+
+
+def test_len(mock_middleware: Mock) -> None:
+    check1 = MockCheck(mock_middleware, "check1")
+    check2 = MockCheck(mock_middleware, "check2")
+
+    pipeline = SecurityCheckPipeline([check1, check2])
+
+    assert len(pipeline) == 2
+
+
+def test_repr(mock_middleware: Mock) -> None:
+    check1 = MockCheck(mock_middleware, "check1")
+    check2 = MockCheck(mock_middleware, "check2")
+
+    pipeline = SecurityCheckPipeline([check1, check2])
+    repr_str = repr(pipeline)
+
+    assert "SecurityCheckPipeline" in repr_str
+    assert "2 checks" in repr_str
+    assert "check1" in repr_str
+    assert "check2" in repr_str
+
+
+@pytest.mark.parametrize(
+    "checks,expected_count",
+    [
+        ([], 0),
+        (["check1"], 1),
+        (["check1", "check2"], 2),
+        (["check1", "check2", "check3"], 3),
+    ],
+)
+def test_pipeline_various_sizes(
+    mock_middleware: Mock, checks: list[str], expected_count: int
+) -> None:
+    check_objects: list[SecurityCheck] = [
+        MockCheck(mock_middleware, name) for name in checks
+    ]
+    pipeline = SecurityCheckPipeline(check_objects)
+
+    assert len(pipeline) == expected_count
+    assert pipeline.get_check_names() == checks

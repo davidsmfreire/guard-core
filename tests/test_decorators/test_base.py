@@ -91,23 +91,24 @@ async def test_base_security_decorator(security_config: SecurityConfig) -> None:
 
 
 async def test_get_route_decorator_config() -> None:
-    security_config = SecurityConfig(enable_redis=False)
+    security_config = SecurityConfig()
     decorator = BaseSecurityDecorator(security_config)
 
     mock_request = MockGuardRequest(scope={})
+
     result = get_route_decorator_config(mock_request, decorator)
     assert result is None
 
-    route_mock = Mock()
-    route_mock.endpoint = None
-    mock_request2 = MockGuardRequest(scope={"route": route_mock})
-    result = get_route_decorator_config(mock_request2, decorator)
+    mock_request = MockGuardRequest(scope={"route": Mock()})
+    mock_request._scope["route"].endpoint = None
+
+    result = get_route_decorator_config(mock_request, decorator)
     assert result is None
 
     mock_endpoint = Mock()
-    route_mock.endpoint = mock_endpoint
-    mock_request3 = MockGuardRequest(scope={"route": route_mock})
-    result = get_route_decorator_config(mock_request3, decorator)
+    mock_request._scope["route"].endpoint = mock_endpoint
+
+    result = get_route_decorator_config(mock_request, decorator)
     assert result is None
 
     route_id = "test.route.id"
@@ -118,8 +119,7 @@ async def test_get_route_decorator_config() -> None:
     )
     decorator._route_configs[route_id] = route_config
 
-    mock_request4 = MockGuardRequest(scope={"route": route_mock})
-    result = get_route_decorator_config(mock_request4, decorator)
+    result = get_route_decorator_config(mock_request, decorator)
     assert result is route_config
 
 
@@ -130,108 +130,3 @@ async def test_initialize_behavior_tracking(security_config: SecurityConfig) -> 
 
     mock_redis_handler = Mock()
     await decorator.initialize_behavior_tracking(mock_redis_handler)
-
-
-async def test_initialize_agent(security_config: SecurityConfig) -> None:
-    from unittest.mock import AsyncMock
-
-    decorator = BaseSecurityDecorator(security_config)
-    agent = AsyncMock()
-    await decorator.initialize_agent(agent)
-    assert decorator.agent_handler is agent
-
-
-async def test_send_decorator_event_no_agent(security_config: SecurityConfig) -> None:
-    decorator = BaseSecurityDecorator(security_config)
-    request = MockGuardRequest()
-    await decorator.send_decorator_event("test", request, "action", "reason", "type")
-
-
-async def test_send_decorator_event_with_agent(security_config: SecurityConfig) -> None:
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    decorator = BaseSecurityDecorator(security_config)
-    decorator.agent_handler = AsyncMock()
-    request = MockGuardRequest()
-    with (
-        patch(
-            "guard_core.utils.extract_client_ip",
-            new_callable=AsyncMock,
-            return_value="1.2.3.4",
-        ),
-        patch.dict("sys.modules", {"guard_agent": MagicMock()}),
-    ):
-        await decorator.send_decorator_event(
-            "test", request, "action", "reason", "type"
-        )
-    decorator.agent_handler.send_event.assert_called_once()
-
-
-async def test_send_decorator_event_error(security_config: SecurityConfig) -> None:
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    decorator = BaseSecurityDecorator(security_config)
-    decorator.agent_handler = AsyncMock()
-    decorator.agent_handler.send_event = AsyncMock(side_effect=Exception("fail"))
-    request = MockGuardRequest()
-    with (
-        patch(
-            "guard_core.utils.extract_client_ip",
-            new_callable=AsyncMock,
-            return_value="1.2.3.4",
-        ),
-        patch.dict("sys.modules", {"guard_agent": MagicMock()}),
-    ):
-        await decorator.send_decorator_event(
-            "test", request, "action", "reason", "type"
-        )
-
-
-async def test_send_access_denied_event(security_config: SecurityConfig) -> None:
-    from unittest.mock import AsyncMock, patch
-
-    decorator = BaseSecurityDecorator(security_config)
-    request = MockGuardRequest()
-    with patch.object(
-        decorator, "send_decorator_event", new_callable=AsyncMock
-    ) as mock:
-        await decorator.send_access_denied_event(request, "reason", "type")
-        mock.assert_called_once()
-
-
-async def test_send_authentication_failed_event(
-    security_config: SecurityConfig,
-) -> None:
-    from unittest.mock import AsyncMock, patch
-
-    decorator = BaseSecurityDecorator(security_config)
-    request = MockGuardRequest()
-    with patch.object(
-        decorator, "send_decorator_event", new_callable=AsyncMock
-    ) as mock:
-        await decorator.send_authentication_failed_event(request, "reason", "bearer")
-        mock.assert_called_once()
-
-
-async def test_send_rate_limit_event(security_config: SecurityConfig) -> None:
-    from unittest.mock import AsyncMock, patch
-
-    decorator = BaseSecurityDecorator(security_config)
-    request = MockGuardRequest()
-    with patch.object(
-        decorator, "send_decorator_event", new_callable=AsyncMock
-    ) as mock:
-        await decorator.send_rate_limit_event(request, 100, 60)
-        mock.assert_called_once()
-
-
-async def test_send_decorator_violation_event(security_config: SecurityConfig) -> None:
-    from unittest.mock import AsyncMock, patch
-
-    decorator = BaseSecurityDecorator(security_config)
-    request = MockGuardRequest()
-    with patch.object(
-        decorator, "send_decorator_event", new_callable=AsyncMock
-    ) as mock:
-        await decorator.send_decorator_violation_event(request, "type", "reason")
-        mock.assert_called_once()

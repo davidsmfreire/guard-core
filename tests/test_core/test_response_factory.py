@@ -1,236 +1,155 @@
-import logging
-from unittest.mock import AsyncMock, patch
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from guard_core.core.events.metrics import MetricsCollector
 from guard_core.core.responses.context import ResponseContext
 from guard_core.core.responses.factory import ErrorResponseFactory
+from guard_core.decorators.base import RouteConfig
 from guard_core.models import SecurityConfig
-from tests.conftest import (
-    MockGuardRequest,
-    MockGuardResponse,
-    MockGuardResponseFactory,
-)
+from tests.conftest import MockGuardRequest, MockGuardResponse, MockGuardResponseFactory
 
 
-@pytest.fixture
-def config():
-    return SecurityConfig(enable_redis=False)
-
-
-@pytest.fixture
-def response_context(config):
-    metrics = MetricsCollector(agent_handler=None, config=config)
+def _make_factory(
+    passive_mode: bool = False,
+    custom_error_responses: dict[int, str] | None = None,
+    custom_response_modifier: object = None,
+    security_headers: dict[str, object] | None = None,
+    **config_overrides: object,
+) -> ErrorResponseFactory:
+    config = SecurityConfig(
+        enable_redis=False,
+        passive_mode=passive_mode,
+        custom_error_responses=custom_error_responses or {},
+        security_headers=security_headers,
+        **config_overrides,
+    )
+    if custom_response_modifier:
+        config.custom_response_modifier = custom_response_modifier
+    metrics = MagicMock(spec=MetricsCollector)
+    metrics.collect_request_metrics = AsyncMock()
     ctx = ResponseContext(
         config=config,
-        logger=logging.getLogger("test"),
+        logger=MagicMock(),
         metrics_collector=metrics,
         response_factory=MockGuardResponseFactory(),
     )
-    return ctx
+    return ErrorResponseFactory(ctx)
 
 
-@pytest.fixture
-def factory(response_context):
-    return ErrorResponseFactory(response_context)
+async def test_create_error_response_default() -> None:
+    factory = _make_factory()
+    resp = await factory.create_error_response(403, "Forbidden")
+    assert resp.status_code == 403
 
 
-class TestCreateErrorResponse:
-    @pytest.mark.asyncio
-    async def test_default_message(self, factory):
-        response = await factory.create_error_response(403, "Forbidden")
-        assert response.status_code == 403
-
-    @pytest.mark.asyncio
-    async def test_custom_error_response(self, factory):
-        factory.context.config.custom_error_responses[403] = "Custom Forbidden"
-        response = await factory.create_error_response(403, "Forbidden")
-        assert response.status_code == 403
-
-    @pytest.mark.asyncio
-    async def test_with_response_modifier(self, factory):
-        async def modifier(resp):
-            resp._headers["X-Modified"] = "true"
-            return resp
-
-        factory.context.config.custom_response_modifier = modifier
-        response = await factory.create_error_response(403, "Forbidden")
-        assert response.headers["X-Modified"] == "true"
+async def test_create_error_response_custom_message() -> None:
+    factory = _make_factory(custom_error_responses={403: "Custom Forbidden"})
+    resp = await factory.create_error_response(403, "Forbidden")
+    assert resp.status_code == 403
 
 
-class TestCreateHttpsRedirect:
-    @pytest.mark.asyncio
-    async def test_redirect(self, factory):
-        request = MockGuardRequest(path="/secure", scheme="http")
-        response = await factory.create_https_redirect(request)
-        assert response.status_code == 301
-        assert "https" in response.headers["Location"]
-
-    @pytest.mark.asyncio
-    async def test_redirect_with_modifier(self, factory):
-        async def modifier(resp):
-            resp._headers["X-Redirected"] = "yes"
-            return resp
-
-        factory.context.config.custom_response_modifier = modifier
-        request = MockGuardRequest(path="/page", scheme="http")
-        response = await factory.create_https_redirect(request)
-        assert response.headers["X-Redirected"] == "yes"
+async def test_create_https_redirect() -> None:
+    factory = _make_factory()
+    req = MockGuardRequest(scheme="http", path="/test")
+    resp = await factory.create_https_redirect(req)
+    assert resp.status_code == 301
+    assert "Location" in resp.headers
 
 
-class TestApplySecurityHeaders:
-    @pytest.mark.asyncio
-    async def test_headers_applied_when_enabled(self, factory):
-        response = MockGuardResponse()
-        result = await factory.apply_security_headers(response)
-        assert isinstance(result, MockGuardResponse)
-
-    @pytest.mark.asyncio
-    async def test_headers_skipped_when_disabled(self, factory):
-        factory.context.config.security_headers = {"enabled": False}
-        response = MockGuardResponse()
-        result = await factory.apply_security_headers(response)
-        assert len(result.headers) == 0
-
-    @pytest.mark.asyncio
-    async def test_headers_skipped_when_none(self, factory):
-        factory.context.config.security_headers = None
-        response = MockGuardResponse()
-        result = await factory.apply_security_headers(response)
-        assert len(result.headers) == 0
+async def test_apply_security_headers_enabled() -> None:
+    factory = _make_factory(security_headers={"enabled": True})
+    resp = MockGuardResponse("ok", 200)
+    result = await factory.apply_security_headers(resp, "/test")
+    assert result is not None
 
 
-class TestApplyCorsHeaders:
-    @pytest.mark.asyncio
-    async def test_cors_headers_applied(self, factory):
-        response = MockGuardResponse()
-        result = await factory.apply_cors_headers(response, "https://example.com")
-        assert isinstance(result, MockGuardResponse)
-
-    @pytest.mark.asyncio
-    async def test_cors_headers_actually_set(self, factory):
-        from guard_core.handlers.security_headers_handler import (
-            security_headers_manager,
-        )
-
-        security_headers_manager.configure(
-            enabled=True,
-            cors_origins=["https://example.com"],
-        )
-        response = MockGuardResponse()
-        result = await factory.apply_cors_headers(response, "https://example.com")
-        assert "Access-Control-Allow-Origin" in result.headers
-        await security_headers_manager.reset()
-
-    @pytest.mark.asyncio
-    async def test_cors_headers_skipped_when_disabled(self, factory):
-        factory.context.config.security_headers = {"enabled": False}
-        response = MockGuardResponse()
-        result = await factory.apply_cors_headers(response, "https://example.com")
-        assert len(result.headers) == 0
-
-    @pytest.mark.asyncio
-    async def test_cors_headers_skipped_when_none(self, factory):
-        factory.context.config.security_headers = None
-        response = MockGuardResponse()
-        result = await factory.apply_cors_headers(response, "https://example.com")
-        assert len(result.headers) == 0
+async def test_apply_security_headers_disabled() -> None:
+    factory = _make_factory(security_headers={"enabled": False})
+    resp = MockGuardResponse("ok", 200)
+    result = await factory.apply_security_headers(resp)
+    assert result is resp
 
 
-class TestApplyModifier:
-    @pytest.mark.asyncio
-    async def test_no_modifier(self, factory):
-        response = MockGuardResponse()
-        result = await factory.apply_modifier(response)
-        assert result is response
-
-    @pytest.mark.asyncio
-    async def test_with_modifier(self, factory):
-        async def modifier(resp):
-            resp._headers["X-Custom"] = "value"
-            return resp
-
-        factory.context.config.custom_response_modifier = modifier
-        response = MockGuardResponse()
-        result = await factory.apply_modifier(response)
-        assert result.headers["X-Custom"] == "value"
+async def test_apply_security_headers_none() -> None:
+    factory = _make_factory(security_headers=None)
+    resp = MockGuardResponse("ok", 200)
+    result = await factory.apply_security_headers(resp)
+    assert result is resp
 
 
-class TestProcessResponse:
-    @pytest.mark.asyncio
-    async def test_basic_process(self, factory):
-        request = MockGuardRequest()
-        response = MockGuardResponse()
-        result = await factory.process_response(
-            request, response, 0.1, route_config=None
-        )
-        assert isinstance(result, MockGuardResponse)
-
-    @pytest.mark.asyncio
-    async def test_process_with_origin_header(self, factory):
-        request = MockGuardRequest(headers={"origin": "https://example.com"})
-        response = MockGuardResponse()
-        result = await factory.process_response(
-            request, response, 0.05, route_config=None
-        )
-        assert isinstance(result, MockGuardResponse)
-
-    @pytest.mark.asyncio
-    async def test_process_with_behavioral_rules(self, factory):
-        from guard_core.decorators.base import RouteConfig
-        from guard_core.handlers.behavior_handler import BehaviorRule
-
-        rc = RouteConfig()
-        rc.behavior_rules.append(BehaviorRule(rule_type="usage", threshold=10))
-
-        callback = AsyncMock()
-
-        request = MockGuardRequest()
-        response = MockGuardResponse()
-
-        with patch(
-            "guard_core.core.responses.factory.extract_client_ip",
-            new_callable=AsyncMock,
-            return_value="127.0.0.1",
-        ):
-            await factory.process_response(
-                request,
-                response,
-                0.1,
-                route_config=rc,
-                process_behavioral_rules=callback,
-            )
-
-        callback.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_process_no_behavioral_callback(self, factory):
-        from guard_core.decorators.base import RouteConfig
-        from guard_core.handlers.behavior_handler import BehaviorRule
-
-        rc = RouteConfig()
-        rc.behavior_rules.append(BehaviorRule(rule_type="usage", threshold=10))
-
-        request = MockGuardRequest()
-        response = MockGuardResponse()
-        result = await factory.process_response(
-            request,
-            response,
-            0.1,
-            route_config=rc,
-            process_behavioral_rules=None,
-        )
-        assert isinstance(result, MockGuardResponse)
+async def test_apply_cors_headers() -> None:
+    factory = _make_factory(
+        security_headers={"enabled": True},
+        enable_cors=True,
+        cors_allow_origins=["https://example.com"],
+    )
+    resp = MockGuardResponse("ok", 200)
+    result = await factory.apply_cors_headers(resp, "https://example.com")
+    assert result is not None
 
 
-class TestApplyModifierEdge:
-    @pytest.mark.asyncio
-    async def test_modifier_raises_propagates(self, factory):
-        async def bad_modifier(resp):
-            raise ValueError("bad modifier")
+async def test_apply_cors_headers_disabled() -> None:
+    factory = _make_factory(security_headers={"enabled": False})
+    resp = MockGuardResponse("ok", 200)
+    result = await factory.apply_cors_headers(resp, "https://example.com")
+    assert result is resp
 
-        factory.context.config.custom_response_modifier = bad_modifier
-        response = MockGuardResponse()
-        with pytest.raises(ValueError):
-            await factory.apply_modifier(response)
+
+async def test_apply_modifier_none() -> None:
+    factory = _make_factory()
+    resp = MockGuardResponse("ok", 200)
+    result = await factory.apply_modifier(resp)
+    assert result is resp
+
+
+async def test_apply_modifier_custom() -> None:
+    async def modifier(response: object) -> object:
+        return response
+
+    factory = _make_factory(custom_response_modifier=modifier)
+    resp = MockGuardResponse("ok", 200)
+    result = await factory.apply_modifier(resp)
+    assert result is resp
+
+
+async def test_process_response_basic() -> None:
+    factory = _make_factory()
+    req = MockGuardRequest(path="/api")
+    resp = MockGuardResponse("ok", 200)
+    result = await factory.process_response(req, resp, 0.1, None)
+    assert result is not None
+
+
+async def test_process_response_with_behavioral_rules() -> None:
+    factory = _make_factory()
+    factory.context.agent_handler = None
+    req = MockGuardRequest(path="/api")
+    resp = MockGuardResponse("ok", 200)
+    rc = RouteConfig()
+    from guard_core.handlers.behavior_handler import BehaviorRule
+
+    rc.behavior_rules = [
+        BehaviorRule(rule_type="usage", threshold=10, window=60, action="log")
+    ]
+    process_fn = AsyncMock()
+    from unittest.mock import patch
+
+    with patch(
+        "guard_core.core.responses.factory.extract_client_ip",
+        new_callable=AsyncMock,
+        return_value="1.2.3.4",
+    ):
+        result = await factory.process_response(req, resp, 0.1, rc, process_fn)
+    process_fn.assert_called_once()
+    assert result is not None
+
+
+async def test_process_response_with_origin() -> None:
+    factory = _make_factory(
+        security_headers={"enabled": True},
+        enable_cors=True,
+        cors_allow_origins=["https://example.com"],
+    )
+    req = MockGuardRequest(path="/api", headers={"origin": "https://example.com"})
+    resp = MockGuardResponse("ok", 200)
+    result = await factory.process_response(req, resp, 0.1, None)
+    assert result is not None

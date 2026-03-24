@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from guard_core.core.checks.base import SecurityCheck
-from tests.conftest import MockGuardRequest, MockGuardResponse
 
 
 class ConcreteSecurityCheck(SecurityCheck):
@@ -23,9 +22,7 @@ def mock_middleware() -> Mock:
     middleware.logger = Mock()
     middleware.event_bus = Mock()
     middleware.event_bus.send_middleware_event = AsyncMock()
-    middleware.create_error_response = AsyncMock(
-        return_value=MockGuardResponse(status_code=403)
-    )
+    middleware.create_error_response = AsyncMock(return_value=Mock(status_code=403))
     return middleware
 
 
@@ -35,109 +32,111 @@ def security_check(mock_middleware: Mock) -> ConcreteSecurityCheck:
 
 
 @pytest.fixture
-def mock_req() -> MockGuardRequest:
-    return MockGuardRequest(path="/test", client_host="127.0.0.1")
+def mock_request() -> Mock:
+    request = Mock()
+    request.url_path = "/test"
+    request.client_host = "127.0.0.1"
+    return request
 
 
-class TestSecurityCheck:
-    def test_cannot_instantiate_abstract_class(self, mock_middleware: Mock) -> None:
-        with pytest.raises(TypeError, match="Can't instantiate abstract class"):
-            SecurityCheck(mock_middleware)
+async def test_cannot_instantiate_abstract_class(mock_middleware: Mock) -> None:
+    with pytest.raises(TypeError, match="Can't instantiate abstract class"):
+        SecurityCheck(mock_middleware)  # type: ignore
 
-    def test_init(self, mock_middleware: Mock) -> None:
-        check = ConcreteSecurityCheck(mock_middleware)
-        assert check.middleware == mock_middleware
-        assert check.config == mock_middleware.config
-        assert check.logger == mock_middleware.logger
 
-    @pytest.mark.asyncio
-    async def test_check_abstract_method(
-        self, security_check: ConcreteSecurityCheck, mock_req: MockGuardRequest
-    ) -> None:
-        result = await security_check.check(mock_req)
-        assert result is None
+async def test_init(mock_middleware: Mock) -> None:
+    check = ConcreteSecurityCheck(mock_middleware)
+    assert check.middleware == mock_middleware
+    assert check.config == mock_middleware.config
+    assert check.logger == mock_middleware.logger
 
-    def test_check_name_abstract_property(
-        self, security_check: ConcreteSecurityCheck
-    ) -> None:
-        assert security_check.check_name == "test_check"
 
-    @pytest.mark.asyncio
-    async def test_send_event(
-        self,
-        security_check: ConcreteSecurityCheck,
-        mock_req: MockGuardRequest,
-        mock_middleware: Mock,
-    ) -> None:
-        await security_check.send_event(
-            event_type="test_event",
-            request=mock_req,
-            action_taken="blocked",
-            reason="test reason",
-            extra_data="test",
-        )
+async def test_check_abstract_method(
+    security_check: ConcreteSecurityCheck, mock_request: Mock
+) -> None:
+    result = await security_check.check(mock_request)
+    assert result is None
 
-        mock_middleware.event_bus.send_middleware_event.assert_called_once_with(
-            event_type="test_event",
-            request=mock_req,
-            action_taken="blocked",
-            reason="test reason",
-            extra_data="test",
-        )
 
-    @pytest.mark.asyncio
-    async def test_send_event_no_extra_kwargs(
-        self,
-        security_check: ConcreteSecurityCheck,
-        mock_req: MockGuardRequest,
-        mock_middleware: Mock,
-    ) -> None:
-        await security_check.send_event(
-            event_type="test_event",
-            request=mock_req,
-            action_taken="allowed",
-            reason="passed checks",
-        )
+def test_check_name_abstract_property(
+    security_check: ConcreteSecurityCheck,
+) -> None:
+    assert security_check.check_name == "test_check"
 
-        mock_middleware.event_bus.send_middleware_event.assert_called_once_with(
-            event_type="test_event",
-            request=mock_req,
-            action_taken="allowed",
-            reason="passed checks",
-        )
 
-    @pytest.mark.asyncio
-    async def test_create_error_response(
-        self, security_check: ConcreteSecurityCheck, mock_middleware: Mock
-    ) -> None:
-        response = await security_check.create_error_response(403, "Forbidden")
+async def test_send_event(
+    security_check: ConcreteSecurityCheck,
+    mock_request: Mock,
+    mock_middleware: Mock,
+) -> None:
+    await security_check.send_event(
+        event_type="test_event",
+        request=mock_request,
+        action_taken="blocked",
+        reason="test reason",
+        extra_data="test",
+    )
 
-        assert response.status_code == 403
-        mock_middleware.create_error_response.assert_called_once_with(403, "Forbidden")
+    mock_middleware.event_bus.send_middleware_event.assert_called_once_with(
+        event_type="test_event",
+        request=mock_request,
+        action_taken="blocked",
+        reason="test reason",
+        extra_data="test",
+    )
 
-    @pytest.mark.asyncio
-    async def test_create_error_response_different_codes(
-        self, security_check: ConcreteSecurityCheck, mock_middleware: Mock
-    ) -> None:
-        mock_middleware.create_error_response.reset_mock()
-        mock_middleware.create_error_response.return_value = MockGuardResponse(
-            status_code=429
-        )
 
-        response = await security_check.create_error_response(429, "Too Many Requests")
+async def test_send_event_no_extra_kwargs(
+    security_check: ConcreteSecurityCheck,
+    mock_request: Mock,
+    mock_middleware: Mock,
+) -> None:
+    await security_check.send_event(
+        event_type="test_event",
+        request=mock_request,
+        action_taken="allowed",
+        reason="passed checks",
+    )
 
-        assert response.status_code == 429
-        mock_middleware.create_error_response.assert_called_once_with(
-            429, "Too Many Requests"
-        )
+    mock_middleware.event_bus.send_middleware_event.assert_called_once_with(
+        event_type="test_event",
+        request=mock_request,
+        action_taken="allowed",
+        reason="passed checks",
+    )
 
-    def test_is_passive_mode_false(self, security_check: ConcreteSecurityCheck) -> None:
-        result = security_check.is_passive_mode()
-        assert result is False
 
-    def test_is_passive_mode_true(
-        self, security_check: ConcreteSecurityCheck, mock_middleware: Mock
-    ) -> None:
-        mock_middleware.config.passive_mode = True
-        result = security_check.is_passive_mode()
-        assert result is True
+async def test_create_error_response(
+    security_check: ConcreteSecurityCheck, mock_middleware: Mock
+) -> None:
+    response = await security_check.create_error_response(403, "Forbidden")
+
+    assert response.status_code == 403
+    mock_middleware.create_error_response.assert_called_once_with(403, "Forbidden")
+
+
+async def test_create_error_response_different_codes(
+    security_check: ConcreteSecurityCheck, mock_middleware: Mock
+) -> None:
+    mock_middleware.create_error_response.reset_mock()
+    mock_middleware.create_error_response.return_value = Mock(status_code=429)
+
+    response = await security_check.create_error_response(429, "Too Many Requests")
+
+    assert response.status_code == 429
+    mock_middleware.create_error_response.assert_called_once_with(
+        429, "Too Many Requests"
+    )
+
+
+def test_is_passive_mode_false(security_check: ConcreteSecurityCheck) -> None:
+    result = security_check.is_passive_mode()
+    assert result is False
+
+
+def test_is_passive_mode_true(
+    security_check: ConcreteSecurityCheck, mock_middleware: Mock
+) -> None:
+    mock_middleware.config.passive_mode = True
+    result = security_check.is_passive_mode()
+    assert result is True

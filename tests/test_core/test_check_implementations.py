@@ -1,6 +1,3 @@
-import logging
-import time
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from guard_core.core.checks.implementations.authentication import AuthenticationCheck
@@ -21,7 +18,9 @@ from guard_core.core.checks.implementations.request_logging import RequestLoggin
 from guard_core.core.checks.implementations.request_size_content import (
     RequestSizeContentCheck,
 )
-from guard_core.core.checks.implementations.required_headers import RequiredHeadersCheck
+from guard_core.core.checks.implementations.required_headers import (
+    RequiredHeadersCheck,
+)
 from guard_core.core.checks.implementations.route_config import RouteConfigCheck
 from guard_core.core.checks.implementations.suspicious_activity import (
     SuspiciousActivityCheck,
@@ -30,1531 +29,1398 @@ from guard_core.core.checks.implementations.time_window import TimeWindowCheck
 from guard_core.core.checks.implementations.user_agent import UserAgentCheck
 from guard_core.decorators.base import RouteConfig
 from guard_core.models import SecurityConfig
-from guard_core.protocols.request_protocol import GuardRequest
-from guard_core.protocols.response_protocol import GuardResponse
 from tests.conftest import MockGuardRequest, MockGuardResponse
 
+_IMPL = "guard_core.core.checks.implementations"
 
-def _make_middleware(**config_overrides: Any) -> MagicMock:
-    config = SecurityConfig(enable_redis=False, **config_overrides)
-    middleware = MagicMock()
-    middleware.config = config
-    middleware.logger = logging.getLogger("test_checks")
-    middleware.event_bus = MagicMock()
-    middleware.event_bus.send_middleware_event = AsyncMock()
-    middleware.event_bus.send_https_violation_event = AsyncMock()
-    middleware.event_bus.send_cloud_detection_events = AsyncMock()
-    middleware.route_resolver = MagicMock()
-    middleware.response_factory = MagicMock()
-    middleware.response_factory.create_https_redirect = AsyncMock(
-        return_value=MockGuardResponse("Redirect", 301, {"Location": "https://test/"})
+
+def _make_middleware(
+    passive_mode: bool = False,
+    **config_overrides: object,
+) -> MagicMock:
+    mw = MagicMock()
+    config = SecurityConfig(
+        enable_redis=False,
+        passive_mode=passive_mode,
+        **config_overrides,
     )
-    middleware.response_factory.apply_modifier = AsyncMock(side_effect=lambda r: r)
-    middleware.agent_handler = None
-    middleware.geo_ip_handler = None
-    middleware.guard_response_factory = MagicMock()
-    middleware.rate_limit_handler = MagicMock()
-    middleware.create_error_response = AsyncMock(
-        side_effect=lambda status_code, default_message: MockGuardResponse(
-            default_message, status_code
-        )
+    mw.config = config
+    mw.logger = MagicMock()
+    mw.event_bus = MagicMock()
+    mw.event_bus.send_middleware_event = AsyncMock()
+    mw.event_bus.send_https_violation_event = AsyncMock()
+    mw.event_bus.send_cloud_detection_events = AsyncMock()
+    mw.create_error_response = AsyncMock(return_value=MockGuardResponse("error", 403))
+    mw.response_factory = MagicMock()
+    mw.response_factory.apply_modifier = AsyncMock(side_effect=lambda r: r)
+    mw.response_factory.create_https_redirect = AsyncMock(
+        return_value=MockGuardResponse("redirect", 301, {"Location": "https://test/"})
     )
-    middleware.last_cloud_ip_refresh = 0
-    middleware.refresh_cloud_ip_ranges = AsyncMock()
-    middleware.suspicious_request_counts = {}
-    return middleware
+    mw.route_resolver = MagicMock()
+    mw.route_resolver.should_bypass_check = MagicMock(return_value=False)
+    mw.route_resolver.get_cloud_providers_to_check = MagicMock(return_value=[])
+    mw.route_resolver.get_route_config = MagicMock(return_value=None)
+    mw.geo_ip_handler = None
+    mw.agent_handler = None
+    mw.rate_limit_handler = MagicMock()
+    mw.rate_limit_handler.check_rate_limit = AsyncMock(return_value=None)
+    mw.suspicious_request_counts = {}
+    mw.last_cloud_ip_refresh = 0
+    mw.refresh_cloud_ip_ranges = AsyncMock()
+    return mw
 
 
-class TestEmergencyModeCheck:
-    async def test_disabled_returns_none(self) -> None:
-        middleware = _make_middleware(emergency_mode=False)
-        check = EmergencyModeCheck(middleware)
-        result = await check.check(MockGuardRequest())
-        assert result is None
+def _make_request_with_route_config(
+    route_config: RouteConfig, **kwargs: object
+) -> MockGuardRequest:
+    req = MockGuardRequest(**kwargs)
+    req.state.route_config = route_config
+    return req
 
-    async def test_whitelisted_ip_returns_none(self) -> None:
-        middleware = _make_middleware(
-            emergency_mode=True, emergency_whitelist=["127.0.0.1"]
-        )
-        check = EmergencyModeCheck(middleware)
-        request = MockGuardRequest(client_host="127.0.0.1")
-        request.state.client_ip = "127.0.0.1"
-        result = await check.check(request)
-        assert result is None
 
-    async def test_non_whitelisted_ip_blocks(self) -> None:
-        middleware = _make_middleware(
-            emergency_mode=True, emergency_whitelist=["10.0.0.1"]
-        )
-        check = EmergencyModeCheck(middleware)
-        request = MockGuardRequest(client_host="192.168.1.1")
-        request.state.client_ip = "192.168.1.1"
-        result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 503
+async def test_route_config_check_name() -> None:
+    mw = _make_middleware()
+    check = RouteConfigCheck(mw)
+    assert check.check_name == "route_config"
 
-    async def test_non_whitelisted_ip_passive_mode(self) -> None:
-        middleware = _make_middleware(
-            emergency_mode=True,
-            emergency_whitelist=["10.0.0.1"],
-            passive_mode=True,
-        )
-        check = EmergencyModeCheck(middleware)
-        request = MockGuardRequest(client_host="192.168.1.1")
-        request.state.client_ip = "192.168.1.1"
-        result = await check.check(request)
-        assert result is None
 
-    async def test_extracts_client_ip_when_not_on_state(self) -> None:
-        middleware = _make_middleware(
-            emergency_mode=True, emergency_whitelist=["127.0.0.1"]
-        )
-        check = EmergencyModeCheck(middleware)
-        request = MockGuardRequest(client_host="127.0.0.1")
+async def test_route_config_check_sets_state() -> None:
+    mw = _make_middleware()
+    rc = RouteConfig()
+    mw.route_resolver.get_route_config = MagicMock(return_value=rc)
+    check = RouteConfigCheck(mw)
+    req = MockGuardRequest()
+    with patch(
+        f"{_IMPL}.route_config.extract_client_ip",
+        new_callable=AsyncMock,
+        return_value="1.2.3.4",
+    ):
+        result = await check.check(req)
+    assert result is None
+    assert req.state.route_config is rc
+    assert req.state.client_ip == "1.2.3.4"
+
+
+async def test_emergency_mode_check_name() -> None:
+    mw = _make_middleware()
+    check = EmergencyModeCheck(mw)
+    assert check.check_name == "emergency_mode"
+
+
+async def test_emergency_mode_disabled() -> None:
+    mw = _make_middleware()
+    check = EmergencyModeCheck(mw)
+    req = MockGuardRequest()
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_emergency_mode_blocks_non_whitelisted() -> None:
+    mw = _make_middleware(emergency_mode=True, emergency_whitelist=["10.0.0.1"])
+    mw.create_error_response = AsyncMock(
+        return_value=MockGuardResponse("unavailable", 503)
+    )
+    check = EmergencyModeCheck(mw)
+    req = MockGuardRequest(client_host="192.168.1.1")
+    req.state.client_ip = "192.168.1.1"
+    with patch(f"{_IMPL}.emergency_mode.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is not None
+    assert result.status_code == 503
+
+
+async def test_emergency_mode_allows_whitelisted() -> None:
+    mw = _make_middleware(emergency_mode=True, emergency_whitelist=["10.0.0.1"])
+    check = EmergencyModeCheck(mw)
+    req = MockGuardRequest(client_host="10.0.0.1")
+    req.state.client_ip = "10.0.0.1"
+    with patch(f"{_IMPL}.emergency_mode.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is None
+
+
+async def test_emergency_mode_extracts_ip_if_missing() -> None:
+    mw = _make_middleware(emergency_mode=True, emergency_whitelist=[])
+    mw.create_error_response = AsyncMock(return_value=MockGuardResponse("err", 503))
+    check = EmergencyModeCheck(mw)
+    req = MockGuardRequest()
+    with patch(
+        f"{_IMPL}.emergency_mode.extract_client_ip",
+        new_callable=AsyncMock,
+        return_value="5.5.5.5",
+    ):
+        with patch(f"{_IMPL}.emergency_mode.log_activity", new_callable=AsyncMock):
+            result = await check.check(req)
+    assert result is not None
+
+
+async def test_https_enforcement_check_name() -> None:
+    mw = _make_middleware()
+    check = HttpsEnforcementCheck(mw)
+    assert check.check_name == "https_enforcement"
+
+
+async def test_https_enforcement_not_required() -> None:
+    mw = _make_middleware()
+    check = HttpsEnforcementCheck(mw)
+    req = MockGuardRequest(scheme="http")
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_https_enforcement_already_https() -> None:
+    mw = _make_middleware(enforce_https=True)
+    check = HttpsEnforcementCheck(mw)
+    req = MockGuardRequest(scheme="https")
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_https_enforcement_redirects_http() -> None:
+    mw = _make_middleware(enforce_https=True)
+    check = HttpsEnforcementCheck(mw)
+    req = MockGuardRequest(scheme="http")
+    result = await check.check(req)
+    assert result is not None
+    assert result.status_code == 301
+
+
+async def test_https_enforcement_passive_mode() -> None:
+    mw = _make_middleware(enforce_https=True, passive_mode=True)
+    check = HttpsEnforcementCheck(mw)
+    req = MockGuardRequest(scheme="http")
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_https_enforcement_route_config_override() -> None:
+    mw = _make_middleware()
+    check = HttpsEnforcementCheck(mw)
+    rc = RouteConfig()
+    rc.require_https = True
+    req = _make_request_with_route_config(rc, scheme="http")
+    result = await check.check(req)
+    assert result is not None
+
+
+async def test_https_enforcement_trusted_proxy() -> None:
+    mw = _make_middleware(
+        enforce_https=True,
+        trust_x_forwarded_proto=True,
+        trusted_proxies=["127.0.0.1"],
+    )
+    check = HttpsEnforcementCheck(mw)
+    req = MockGuardRequest(
+        scheme="http",
+        client_host="127.0.0.1",
+        headers={"X-Forwarded-Proto": "https"},
+    )
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_https_enforcement_trusted_proxy_cidr() -> None:
+    mw = _make_middleware(
+        enforce_https=True,
+        trust_x_forwarded_proto=True,
+        trusted_proxies=["10.0.0.0/8"],
+    )
+    check = HttpsEnforcementCheck(mw)
+    req = MockGuardRequest(
+        scheme="http",
+        client_host="10.1.2.3",
+        headers={"X-Forwarded-Proto": "https"},
+    )
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_request_logging_check_name() -> None:
+    mw = _make_middleware()
+    check = RequestLoggingCheck(mw)
+    assert check.check_name == "request_logging"
+
+
+async def test_request_logging_check() -> None:
+    mw = _make_middleware()
+    check = RequestLoggingCheck(mw)
+    req = MockGuardRequest()
+    with patch(f"{_IMPL}.request_logging.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is None
+
+
+async def test_request_size_content_check_name() -> None:
+    mw = _make_middleware()
+    check = RequestSizeContentCheck(mw)
+    assert check.check_name == "request_size_content"
+
+
+async def test_request_size_content_no_route_config() -> None:
+    mw = _make_middleware()
+    check = RequestSizeContentCheck(mw)
+    req = MockGuardRequest()
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_request_size_content_no_limit() -> None:
+    mw = _make_middleware()
+    check = RequestSizeContentCheck(mw)
+    rc = RouteConfig()
+    req = _make_request_with_route_config(rc)
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_request_size_content_exceeds_limit() -> None:
+    mw = _make_middleware()
+    mw.create_error_response = AsyncMock(return_value=MockGuardResponse("large", 413))
+    check = RequestSizeContentCheck(mw)
+    rc = RouteConfig()
+    rc.max_request_size = 100
+    req = _make_request_with_route_config(rc, headers={"content-length": "200"})
+    with patch(f"{_IMPL}.request_size_content.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is not None
+    assert result.status_code == 413
+
+
+async def test_request_size_content_within_limit() -> None:
+    mw = _make_middleware()
+    check = RequestSizeContentCheck(mw)
+    rc = RouteConfig()
+    rc.max_request_size = 1000
+    req = _make_request_with_route_config(rc, headers={"content-length": "50"})
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_request_size_content_no_content_length() -> None:
+    mw = _make_middleware()
+    check = RequestSizeContentCheck(mw)
+    rc = RouteConfig()
+    rc.max_request_size = 100
+    req = _make_request_with_route_config(rc)
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_request_size_content_type_blocked() -> None:
+    mw = _make_middleware()
+    mw.create_error_response = AsyncMock(
+        return_value=MockGuardResponse("bad type", 415)
+    )
+    check = RequestSizeContentCheck(mw)
+    rc = RouteConfig()
+    rc.allowed_content_types = ["application/json"]
+    req = _make_request_with_route_config(rc, headers={"content-type": "text/html"})
+    with patch(f"{_IMPL}.request_size_content.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is not None
+    assert result.status_code == 415
+
+
+async def test_request_size_content_type_allowed() -> None:
+    mw = _make_middleware()
+    check = RequestSizeContentCheck(mw)
+    rc = RouteConfig()
+    rc.allowed_content_types = ["application/json"]
+    req = _make_request_with_route_config(
+        rc, headers={"content-type": "application/json; charset=utf-8"}
+    )
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_request_size_passive_mode() -> None:
+    mw = _make_middleware(passive_mode=True)
+    check = RequestSizeContentCheck(mw)
+    rc = RouteConfig()
+    rc.max_request_size = 100
+    req = _make_request_with_route_config(rc, headers={"content-length": "200"})
+    with patch(f"{_IMPL}.request_size_content.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is None
+
+
+async def test_request_content_type_passive_mode() -> None:
+    mw = _make_middleware(passive_mode=True)
+    check = RequestSizeContentCheck(mw)
+    rc = RouteConfig()
+    rc.allowed_content_types = ["application/json"]
+    req = _make_request_with_route_config(rc, headers={"content-type": "text/html"})
+    with patch(f"{_IMPL}.request_size_content.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is None
+
+
+async def test_required_headers_check_name() -> None:
+    mw = _make_middleware()
+    check = RequiredHeadersCheck(mw)
+    assert check.check_name == "required_headers"
+
+
+async def test_required_headers_no_route_config() -> None:
+    mw = _make_middleware()
+    check = RequiredHeadersCheck(mw)
+    req = MockGuardRequest()
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_required_headers_missing() -> None:
+    mw = _make_middleware()
+    mw.create_error_response = AsyncMock(return_value=MockGuardResponse("missing", 400))
+    check = RequiredHeadersCheck(mw)
+    rc = RouteConfig()
+    rc.required_headers = {"X-API-Key": "required"}
+    req = _make_request_with_route_config(rc)
+    with patch(f"{_IMPL}.required_headers.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is not None
+    assert result.status_code == 400
+
+
+async def test_required_headers_present() -> None:
+    mw = _make_middleware()
+    check = RequiredHeadersCheck(mw)
+    rc = RouteConfig()
+    rc.required_headers = {"X-API-Key": "required"}
+    req = _make_request_with_route_config(rc, headers={"X-API-Key": "mykey"})
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_required_headers_authorization_classification() -> None:
+    mw = _make_middleware()
+    mw.create_error_response = AsyncMock(return_value=MockGuardResponse("missing", 400))
+    check = RequiredHeadersCheck(mw)
+    rc = RouteConfig()
+    rc.required_headers = {"authorization": "required"}
+    req = _make_request_with_route_config(rc)
+    with patch(f"{_IMPL}.required_headers.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is not None
+
+
+async def test_required_headers_generic_classification() -> None:
+    mw = _make_middleware()
+    mw.create_error_response = AsyncMock(return_value=MockGuardResponse("missing", 400))
+    check = RequiredHeadersCheck(mw)
+    rc = RouteConfig()
+    rc.required_headers = {"X-Custom": "required"}
+    req = _make_request_with_route_config(rc)
+    with patch(f"{_IMPL}.required_headers.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is not None
+
+
+async def test_required_headers_passive_mode() -> None:
+    mw = _make_middleware(passive_mode=True)
+    check = RequiredHeadersCheck(mw)
+    rc = RouteConfig()
+    rc.required_headers = {"X-API-Key": "required"}
+    req = _make_request_with_route_config(rc)
+    with patch(f"{_IMPL}.required_headers.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is None
+
+
+async def test_authentication_check_name() -> None:
+    mw = _make_middleware()
+    check = AuthenticationCheck(mw)
+    assert check.check_name == "authentication"
+
+
+async def test_authentication_no_route_config() -> None:
+    mw = _make_middleware()
+    check = AuthenticationCheck(mw)
+    req = MockGuardRequest()
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_authentication_no_auth_required() -> None:
+    mw = _make_middleware()
+    check = AuthenticationCheck(mw)
+    rc = RouteConfig()
+    req = _make_request_with_route_config(rc)
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_authentication_bearer_valid() -> None:
+    mw = _make_middleware()
+    check = AuthenticationCheck(mw)
+    rc = RouteConfig()
+    rc.auth_required = "bearer"
+    req = _make_request_with_route_config(
+        rc, headers={"authorization": "Bearer token123"}
+    )
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_authentication_bearer_invalid() -> None:
+    mw = _make_middleware()
+    mw.create_error_response = AsyncMock(return_value=MockGuardResponse("unauth", 401))
+    check = AuthenticationCheck(mw)
+    rc = RouteConfig()
+    rc.auth_required = "bearer"
+    req = _make_request_with_route_config(rc, headers={"authorization": "Basic creds"})
+    with patch(f"{_IMPL}.authentication.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is not None
+    assert result.status_code == 401
+
+
+async def test_authentication_basic_valid() -> None:
+    mw = _make_middleware()
+    check = AuthenticationCheck(mw)
+    rc = RouteConfig()
+    rc.auth_required = "basic"
+    req = _make_request_with_route_config(
+        rc, headers={"authorization": "Basic dXNlcjpwYXNz"}
+    )
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_authentication_basic_invalid() -> None:
+    mw = _make_middleware()
+    mw.create_error_response = AsyncMock(return_value=MockGuardResponse("unauth", 401))
+    check = AuthenticationCheck(mw)
+    rc = RouteConfig()
+    rc.auth_required = "basic"
+    req = _make_request_with_route_config(rc, headers={"authorization": "Bearer token"})
+    with patch(f"{_IMPL}.authentication.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is not None
+
+
+async def test_authentication_passive_mode() -> None:
+    mw = _make_middleware(passive_mode=True)
+    check = AuthenticationCheck(mw)
+    rc = RouteConfig()
+    rc.auth_required = "bearer"
+    req = _make_request_with_route_config(rc, headers={"authorization": "invalid"})
+    with patch(f"{_IMPL}.authentication.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is None
+
+
+async def test_authentication_custom_type_missing() -> None:
+    mw = _make_middleware()
+    mw.create_error_response = AsyncMock(return_value=MockGuardResponse("unauth", 401))
+    check = AuthenticationCheck(mw)
+    rc = RouteConfig()
+    rc.auth_required = "custom"
+    req = _make_request_with_route_config(rc, headers={"authorization": ""})
+    with patch(f"{_IMPL}.authentication.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is not None
+
+
+async def test_referrer_check_name() -> None:
+    mw = _make_middleware()
+    check = ReferrerCheck(mw)
+    assert check.check_name == "referrer"
+
+
+async def test_referrer_no_route_config() -> None:
+    mw = _make_middleware()
+    check = ReferrerCheck(mw)
+    req = MockGuardRequest()
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_referrer_not_required() -> None:
+    mw = _make_middleware()
+    check = ReferrerCheck(mw)
+    rc = RouteConfig()
+    req = _make_request_with_route_config(rc)
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_referrer_missing() -> None:
+    mw = _make_middleware()
+    mw.create_error_response = AsyncMock(return_value=MockGuardResponse("no ref", 403))
+    check = ReferrerCheck(mw)
+    rc = RouteConfig()
+    rc.require_referrer = ["example.com"]
+    req = _make_request_with_route_config(rc)
+    with patch(f"{_IMPL}.referrer.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is not None
+    assert result.status_code == 403
+
+
+async def test_referrer_invalid_domain() -> None:
+    mw = _make_middleware()
+    mw.create_error_response = AsyncMock(return_value=MockGuardResponse("bad ref", 403))
+    check = ReferrerCheck(mw)
+    rc = RouteConfig()
+    rc.require_referrer = ["example.com"]
+    req = _make_request_with_route_config(
+        rc, headers={"referer": "https://evil.com/page"}
+    )
+    with patch(f"{_IMPL}.referrer.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is not None
+
+
+async def test_referrer_valid_domain() -> None:
+    mw = _make_middleware()
+    check = ReferrerCheck(mw)
+    rc = RouteConfig()
+    rc.require_referrer = ["example.com"]
+    req = _make_request_with_route_config(
+        rc, headers={"referer": "https://example.com/page"}
+    )
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_referrer_passive_mode_missing() -> None:
+    mw = _make_middleware(passive_mode=True)
+    check = ReferrerCheck(mw)
+    rc = RouteConfig()
+    rc.require_referrer = ["example.com"]
+    req = _make_request_with_route_config(rc)
+    with patch(f"{_IMPL}.referrer.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is None
+
+
+async def test_referrer_passive_mode_invalid() -> None:
+    mw = _make_middleware(passive_mode=True)
+    check = ReferrerCheck(mw)
+    rc = RouteConfig()
+    rc.require_referrer = ["example.com"]
+    req = _make_request_with_route_config(rc, headers={"referer": "https://evil.com/"})
+    with patch(f"{_IMPL}.referrer.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is None
+
+
+async def test_custom_validators_check_name() -> None:
+    mw = _make_middleware()
+    check = CustomValidatorsCheck(mw)
+    assert check.check_name == "custom_validators"
+
+
+async def test_custom_validators_no_route_config() -> None:
+    mw = _make_middleware()
+    check = CustomValidatorsCheck(mw)
+    req = MockGuardRequest()
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_custom_validators_passes() -> None:
+    mw = _make_middleware()
+    check = CustomValidatorsCheck(mw)
+    rc = RouteConfig()
+    rc.custom_validators = [AsyncMock(return_value=None)]
+    req = _make_request_with_route_config(rc)
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_custom_validators_blocks() -> None:
+    mw = _make_middleware()
+    blocked_resp = MockGuardResponse("blocked", 403)
+    check = CustomValidatorsCheck(mw)
+    rc = RouteConfig()
+    rc.custom_validators = [AsyncMock(return_value=blocked_resp)]
+    req = _make_request_with_route_config(rc)
+    with patch(f"{_IMPL}.custom_validators.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is not None
+    assert result.status_code == 403
+
+
+async def test_custom_validators_passive_mode() -> None:
+    mw = _make_middleware(passive_mode=True)
+    blocked_resp = MockGuardResponse("blocked", 403)
+    check = CustomValidatorsCheck(mw)
+    rc = RouteConfig()
+    rc.custom_validators = [AsyncMock(return_value=blocked_resp)]
+    req = _make_request_with_route_config(rc)
+    with patch(f"{_IMPL}.custom_validators.log_activity", new_callable=AsyncMock):
+        result = await check.check(req)
+    assert result is None
+
+
+async def test_time_window_check_name() -> None:
+    mw = _make_middleware()
+    check = TimeWindowCheck(mw)
+    assert check.check_name == "time_window"
+
+
+async def test_time_window_no_route_config() -> None:
+    mw = _make_middleware()
+    check = TimeWindowCheck(mw)
+    req = MockGuardRequest()
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_time_window_allowed() -> None:
+    mw = _make_middleware()
+    check = TimeWindowCheck(mw)
+    rc = RouteConfig()
+    rc.time_restrictions = {"start": "00:00", "end": "23:59", "timezone": "UTC"}
+    req = _make_request_with_route_config(rc)
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_time_window_blocked() -> None:
+    mw = _make_middleware()
+    mw.create_error_response = AsyncMock(return_value=MockGuardResponse("denied", 403))
+    check = TimeWindowCheck(mw)
+    rc = RouteConfig()
+    rc.time_restrictions = {"start": "00:00", "end": "00:01", "timezone": "UTC"}
+    req = _make_request_with_route_config(rc)
+
+    with patch.object(
+        check,
+        "_check_time_window",
+        new_callable=AsyncMock,
+        return_value=False,
+    ):
         with patch(
-            "guard_core.core.checks.implementations.emergency_mode.extract_client_ip",
+            f"{_IMPL}.time_window.log_activity",
             new_callable=AsyncMock,
-            return_value="127.0.0.1",
         ):
-            result = await check.check(request)
-        assert result is None
+            result = await check.check(req)
+    assert result is not None
+    assert result.status_code == 403
 
 
-class TestHttpsEnforcementCheck:
-    async def test_not_enforced_returns_none(self) -> None:
-        middleware = _make_middleware(enforce_https=False)
-        check = HttpsEnforcementCheck(middleware)
-        request = MockGuardRequest(scheme="http")
-        result = await check.check(request)
-        assert result is None
+async def test_time_window_passive_mode() -> None:
+    mw = _make_middleware(passive_mode=True)
+    check = TimeWindowCheck(mw)
+    rc = RouteConfig()
+    rc.time_restrictions = {
+        "start": "00:00",
+        "end": "00:01",
+        "timezone": "UTC",
+    }
+    req = _make_request_with_route_config(rc)
 
-    async def test_https_request_passes(self) -> None:
-        middleware = _make_middleware(enforce_https=True)
-        check = HttpsEnforcementCheck(middleware)
-        request = MockGuardRequest(scheme="https")
-        result = await check.check(request)
-        assert result is None
-
-    async def test_http_request_redirects(self) -> None:
-        middleware = _make_middleware(enforce_https=True)
-        check = HttpsEnforcementCheck(middleware)
-        request = MockGuardRequest(scheme="http")
-        result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 301
-
-    async def test_http_request_passive_mode(self) -> None:
-        middleware = _make_middleware(enforce_https=True, passive_mode=True)
-        check = HttpsEnforcementCheck(middleware)
-        request = MockGuardRequest(scheme="http")
-        result = await check.check(request)
-        assert result is None
-
-    async def test_route_config_overrides_global(self) -> None:
-        middleware = _make_middleware(enforce_https=False)
-        check = HttpsEnforcementCheck(middleware)
-        request = MockGuardRequest(scheme="http")
-        rc = RouteConfig()
-        rc.require_https = True
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 301
-
-    async def test_trusted_proxy_x_forwarded_proto(self) -> None:
-        middleware = _make_middleware(
-            enforce_https=True,
-            trust_x_forwarded_proto=True,
-            trusted_proxies=["127.0.0.1"],
-        )
-        check = HttpsEnforcementCheck(middleware)
-        request = MockGuardRequest(
-            scheme="http",
-            client_host="127.0.0.1",
-            headers={"X-Forwarded-Proto": "https"},
-        )
-        result = await check.check(request)
-        assert result is None
-
-    async def test_untrusted_proxy_x_forwarded_proto_ignored(self) -> None:
-        middleware = _make_middleware(
-            enforce_https=True,
-            trust_x_forwarded_proto=True,
-            trusted_proxies=["10.0.0.1"],
-        )
-        check = HttpsEnforcementCheck(middleware)
-        request = MockGuardRequest(
-            scheme="http",
-            client_host="192.168.1.1",
-            headers={"X-Forwarded-Proto": "https"},
-        )
-        result = await check.check(request)
-        assert result is not None
-
-    async def test_trusted_proxy_cidr(self) -> None:
-        middleware = _make_middleware(
-            enforce_https=True,
-            trust_x_forwarded_proto=True,
-            trusted_proxies=["10.0.0.0/8"],
-        )
-        check = HttpsEnforcementCheck(middleware)
-        request = MockGuardRequest(
-            scheme="http",
-            client_host="10.0.0.5",
-            headers={"X-Forwarded-Proto": "https"},
-        )
-        result = await check.check(request)
-        assert result is None
-
-
-class TestRequiredHeadersCheck:
-    async def test_no_route_config_returns_none(self) -> None:
-        middleware = _make_middleware()
-        check = RequiredHeadersCheck(middleware)
-        request = MockGuardRequest()
-        result = await check.check(request)
-        assert result is None
-
-    async def test_no_required_headers_returns_none(self) -> None:
-        middleware = _make_middleware()
-        check = RequiredHeadersCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-    async def test_required_header_present_passes(self) -> None:
-        middleware = _make_middleware()
-        check = RequiredHeadersCheck(middleware)
-        request = MockGuardRequest(headers={"X-Api-Key": "my-key"})
-        rc = RouteConfig()
-        rc.required_headers = {"X-Api-Key": "required"}
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-    async def test_required_header_missing_blocks(self) -> None:
-        middleware = _make_middleware()
-        check = RequiredHeadersCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.required_headers = {"X-Api-Key": "required"}
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 400
-
-    async def test_required_header_missing_passive_mode(self) -> None:
-        middleware = _make_middleware(passive_mode=True)
-        check = RequiredHeadersCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.required_headers = {"Authorization": "required"}
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-
-class TestAuthenticationCheck:
-    async def test_no_route_config_returns_none(self) -> None:
-        middleware = _make_middleware()
-        check = AuthenticationCheck(middleware)
-        request = MockGuardRequest()
-        result = await check.check(request)
-        assert result is None
-
-    async def test_no_auth_required_returns_none(self) -> None:
-        middleware = _make_middleware()
-        check = AuthenticationCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-    async def test_valid_bearer_passes(self) -> None:
-        middleware = _make_middleware()
-        check = AuthenticationCheck(middleware)
-        request = MockGuardRequest(headers={"authorization": "Bearer mytoken123"})
-        rc = RouteConfig()
-        rc.auth_required = "bearer"
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-    async def test_missing_bearer_blocks(self) -> None:
-        middleware = _make_middleware()
-        check = AuthenticationCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.auth_required = "bearer"
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 401
-
-    async def test_invalid_bearer_blocks(self) -> None:
-        middleware = _make_middleware()
-        check = AuthenticationCheck(middleware)
-        request = MockGuardRequest(headers={"authorization": "Basic abc"})
-        rc = RouteConfig()
-        rc.auth_required = "bearer"
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 401
-
-    async def test_valid_basic_passes(self) -> None:
-        middleware = _make_middleware()
-        check = AuthenticationCheck(middleware)
-        request = MockGuardRequest(headers={"authorization": "Basic dXNlcjpwYXNz"})
-        rc = RouteConfig()
-        rc.auth_required = "basic"
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-    async def test_auth_failure_passive_mode(self) -> None:
-        middleware = _make_middleware(passive_mode=True)
-        check = AuthenticationCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.auth_required = "bearer"
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-
-class TestUserAgentCheck:
-    async def test_whitelisted_ip_returns_none(self) -> None:
-        middleware = _make_middleware()
-        check = UserAgentCheck(middleware)
-        request = MockGuardRequest()
-        request.state.is_whitelisted = True
-        result = await check.check(request)
-        assert result is None
-
-    async def test_allowed_user_agent_passes(self) -> None:
-        middleware = _make_middleware()
-        check = UserAgentCheck(middleware)
-        request = MockGuardRequest(headers={"User-Agent": "Mozilla/5.0"})
+    with patch.object(
+        check,
+        "_check_time_window",
+        new_callable=AsyncMock,
+        return_value=False,
+    ):
         with patch(
-            "guard_core.utils.is_user_agent_allowed",
+            f"{_IMPL}.time_window.log_activity",
+            new_callable=AsyncMock,
+        ):
+            result = await check.check(req)
+    assert result is None
+
+
+async def test_time_window_overnight() -> None:
+    mw = _make_middleware()
+    check = TimeWindowCheck(mw)
+    tw = {"start": "22:00", "end": "06:00", "timezone": "UTC"}
+    result = await check._check_time_window(tw)
+    assert isinstance(result, bool)
+
+
+async def test_time_window_invalid_timezone() -> None:
+    mw = _make_middleware()
+    check = TimeWindowCheck(mw)
+    tw = {
+        "start": "00:00",
+        "end": "23:59",
+        "timezone": "Invalid/Zone",
+    }
+    result = await check._check_time_window(tw)
+    assert isinstance(result, bool)
+
+
+async def test_time_window_error_handling() -> None:
+    mw = _make_middleware()
+    check = TimeWindowCheck(mw)
+    result = await check._check_time_window({})
+    assert result is True
+
+
+async def test_cloud_ip_refresh_check_name() -> None:
+    mw = _make_middleware()
+    check = CloudIpRefreshCheck(mw)
+    assert check.check_name == "cloud_ip_refresh"
+
+
+async def test_cloud_ip_refresh_no_block() -> None:
+    mw = _make_middleware()
+    check = CloudIpRefreshCheck(mw)
+    req = MockGuardRequest()
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_cloud_ip_refresh_triggers() -> None:
+    mw = _make_middleware()
+    mw.config.block_cloud_providers = {"AWS"}
+    mw.config.cloud_ip_refresh_interval = 1
+    mw.last_cloud_ip_refresh = 0
+    check = CloudIpRefreshCheck(mw)
+    req = MockGuardRequest()
+    result = await check.check(req)
+    assert result is None
+    mw.refresh_cloud_ip_ranges.assert_called_once()
+
+
+async def test_cloud_provider_check_name() -> None:
+    mw = _make_middleware()
+    check = CloudProviderCheck(mw)
+    assert check.check_name == "cloud_provider"
+
+
+async def test_cloud_provider_whitelisted() -> None:
+    mw = _make_middleware()
+    check = CloudProviderCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = True
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_cloud_provider_no_client_ip() -> None:
+    mw = _make_middleware()
+    check = CloudProviderCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = False
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_cloud_provider_bypass() -> None:
+    mw = _make_middleware()
+    mw.route_resolver.should_bypass_check = MagicMock(return_value=True)
+    check = CloudProviderCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_cloud_provider_no_providers() -> None:
+    mw = _make_middleware()
+    mw.route_resolver.get_cloud_providers_to_check = MagicMock(return_value=[])
+    check = CloudProviderCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_cloud_provider_blocks() -> None:
+    mw = _make_middleware()
+    mw.route_resolver.get_cloud_providers_to_check = MagicMock(return_value=["AWS"])
+    check = CloudProviderCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    with patch(f"{_IMPL}.cloud_provider.cloud_handler") as mock_ch:
+        mock_ch.is_cloud_ip = MagicMock(return_value=True)
+        with patch(f"{_IMPL}.cloud_provider.log_activity", new_callable=AsyncMock):
+            result = await check.check(req)
+    assert result is not None
+
+
+async def test_cloud_provider_not_cloud_ip() -> None:
+    mw = _make_middleware()
+    mw.route_resolver.get_cloud_providers_to_check = MagicMock(return_value=["AWS"])
+    check = CloudProviderCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    with patch(f"{_IMPL}.cloud_provider.cloud_handler") as mock_ch:
+        mock_ch.is_cloud_ip = MagicMock(return_value=False)
+        result = await check.check(req)
+    assert result is None
+
+
+async def test_cloud_provider_passive_mode() -> None:
+    mw = _make_middleware(passive_mode=True)
+    mw.route_resolver.get_cloud_providers_to_check = MagicMock(return_value=["AWS"])
+    check = CloudProviderCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    with patch(f"{_IMPL}.cloud_provider.cloud_handler") as mock_ch:
+        mock_ch.is_cloud_ip = MagicMock(return_value=True)
+        with patch(f"{_IMPL}.cloud_provider.log_activity", new_callable=AsyncMock):
+            result = await check.check(req)
+    assert result is None
+
+
+async def test_user_agent_check_name() -> None:
+    mw = _make_middleware()
+    check = UserAgentCheck(mw)
+    assert check.check_name == "user_agent"
+
+
+async def test_user_agent_whitelisted() -> None:
+    mw = _make_middleware()
+    check = UserAgentCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = True
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_user_agent_allowed() -> None:
+    mw = _make_middleware()
+    check = UserAgentCheck(mw)
+    req = MockGuardRequest(headers={"User-Agent": "Mozilla/5.0"})
+    req.state.is_whitelisted = False
+    with patch(
+        f"{_IMPL}.user_agent.check_user_agent_allowed",
+        new_callable=AsyncMock,
+        return_value=True,
+    ):
+        result = await check.check(req)
+    assert result is None
+
+
+async def test_user_agent_blocked_global() -> None:
+    mw = _make_middleware()
+    check = UserAgentCheck(mw)
+    req = MockGuardRequest(headers={"User-Agent": "badbot"})
+    req.state.is_whitelisted = False
+    with patch(
+        f"{_IMPL}.user_agent.check_user_agent_allowed",
+        new_callable=AsyncMock,
+        return_value=False,
+    ):
+        with patch(f"{_IMPL}.user_agent.log_activity", new_callable=AsyncMock):
+            result = await check.check(req)
+    assert result is not None
+
+
+async def test_user_agent_blocked_by_route_decorator() -> None:
+    mw = _make_middleware()
+    check = UserAgentCheck(mw)
+    rc = RouteConfig()
+    rc.blocked_user_agents = ["badbot"]
+    req = _make_request_with_route_config(rc, headers={"User-Agent": "badbot"})
+    req.state.is_whitelisted = False
+    with patch(
+        f"{_IMPL}.user_agent.check_user_agent_allowed",
+        new_callable=AsyncMock,
+        return_value=False,
+    ):
+        with patch(f"{_IMPL}.user_agent.log_activity", new_callable=AsyncMock):
+            result = await check.check(req)
+    assert result is not None
+
+
+async def test_user_agent_passive_mode() -> None:
+    mw = _make_middleware(passive_mode=True)
+    check = UserAgentCheck(mw)
+    req = MockGuardRequest(headers={"User-Agent": "badbot"})
+    req.state.is_whitelisted = False
+    with patch(
+        f"{_IMPL}.user_agent.check_user_agent_allowed",
+        new_callable=AsyncMock,
+        return_value=False,
+    ):
+        with patch(f"{_IMPL}.user_agent.log_activity", new_callable=AsyncMock):
+            result = await check.check(req)
+    assert result is None
+
+
+async def test_ip_security_check_name() -> None:
+    mw = _make_middleware()
+    check = IpSecurityCheck(mw)
+    assert check.check_name == "ip_security"
+
+
+async def test_ip_security_no_client_ip() -> None:
+    mw = _make_middleware()
+    check = IpSecurityCheck(mw)
+    req = MockGuardRequest()
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_ip_security_banned_ip() -> None:
+    mw = _make_middleware()
+    check = IpSecurityCheck(mw)
+    req = MockGuardRequest()
+    req.state.client_ip = "1.2.3.4"
+    with patch(f"{_IMPL}.ip_security.ip_ban_manager") as mock_ban:
+        mock_ban.is_ip_banned = AsyncMock(return_value=True)
+        with patch(f"{_IMPL}.ip_security.log_activity", new_callable=AsyncMock):
+            result = await check.check(req)
+    assert result is not None
+
+
+async def test_ip_security_bypass_ip_check() -> None:
+    mw = _make_middleware()
+    mw.route_resolver.should_bypass_check = MagicMock(
+        side_effect=lambda check, rc: check == "ip"
+    )
+    check = IpSecurityCheck(mw)
+    req = MockGuardRequest()
+    req.state.client_ip = "1.2.3.4"
+    with patch(f"{_IMPL}.ip_security.ip_ban_manager") as mock_ban:
+        mock_ban.is_ip_banned = AsyncMock(return_value=False)
+        result = await check.check(req)
+    assert result is None
+
+
+async def test_ip_security_route_ip_blocked() -> None:
+    mw = _make_middleware()
+    mw.route_resolver.should_bypass_check = MagicMock(return_value=False)
+    check = IpSecurityCheck(mw)
+    rc = RouteConfig()
+    rc.ip_blacklist = ["1.2.3.4"]
+    req = _make_request_with_route_config(rc)
+    req.state.client_ip = "1.2.3.4"
+    with patch(f"{_IMPL}.ip_security.ip_ban_manager") as mock_ban:
+        mock_ban.is_ip_banned = AsyncMock(return_value=False)
+        with patch(f"{_IMPL}.ip_security.log_activity", new_callable=AsyncMock):
+            result = await check.check(req)
+    assert result is not None
+
+
+async def test_ip_security_route_ip_allowed() -> None:
+    mw = _make_middleware()
+    mw.route_resolver.should_bypass_check = MagicMock(return_value=False)
+    check = IpSecurityCheck(mw)
+    rc = RouteConfig()
+    rc.ip_whitelist = ["1.2.3.4"]
+    req = _make_request_with_route_config(rc)
+    req.state.client_ip = "1.2.3.4"
+    with patch(f"{_IMPL}.ip_security.ip_ban_manager") as mock_ban:
+        mock_ban.is_ip_banned = AsyncMock(return_value=False)
+        result = await check.check(req)
+    assert result is None
+
+
+async def test_ip_security_global_check() -> None:
+    mw = _make_middleware(whitelist=["1.2.3.4"])
+    mw.route_resolver.should_bypass_check = MagicMock(return_value=False)
+    check = IpSecurityCheck(mw)
+    req = MockGuardRequest()
+    req.state.client_ip = "1.2.3.4"
+    with patch(f"{_IMPL}.ip_security.ip_ban_manager") as mock_ban:
+        mock_ban.is_ip_banned = AsyncMock(return_value=False)
+        with patch(
+            f"{_IMPL}.ip_security.is_ip_allowed",
             new_callable=AsyncMock,
             return_value=True,
         ):
-            result = await check.check(request)
-        assert result is None
+            result = await check.check(req)
+    assert result is None
 
-    async def test_blocked_user_agent_blocks(self) -> None:
-        middleware = _make_middleware()
-        check = UserAgentCheck(middleware)
-        request = MockGuardRequest(headers={"User-Agent": "BadBot"})
+
+async def test_ip_security_global_blocked() -> None:
+    mw = _make_middleware()
+    mw.route_resolver.should_bypass_check = MagicMock(return_value=False)
+    check = IpSecurityCheck(mw)
+    req = MockGuardRequest()
+    req.state.client_ip = "9.9.9.9"
+    with patch(f"{_IMPL}.ip_security.ip_ban_manager") as mock_ban:
+        mock_ban.is_ip_banned = AsyncMock(return_value=False)
         with patch(
-            "guard_core.core.checks.implementations.user_agent.check_user_agent_allowed",
+            f"{_IMPL}.ip_security.is_ip_allowed",
             new_callable=AsyncMock,
             return_value=False,
         ):
-            result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 403
+            with patch(f"{_IMPL}.ip_security.log_activity", new_callable=AsyncMock):
+                result = await check.check(req)
+    assert result is not None
 
-    async def test_blocked_user_agent_passive_mode(self) -> None:
-        middleware = _make_middleware(passive_mode=True)
-        check = UserAgentCheck(middleware)
-        request = MockGuardRequest(headers={"User-Agent": "BadBot"})
+
+async def test_ip_security_passive_mode_banned() -> None:
+    mw = _make_middleware(passive_mode=True)
+    check = IpSecurityCheck(mw)
+    req = MockGuardRequest()
+    req.state.client_ip = "1.2.3.4"
+    with patch(f"{_IMPL}.ip_security.ip_ban_manager") as mock_ban:
+        mock_ban.is_ip_banned = AsyncMock(return_value=True)
+        with patch(f"{_IMPL}.ip_security.log_activity", new_callable=AsyncMock):
+            result = await check.check(req)
+    assert result is None
+
+
+async def test_ip_security_passive_mode_route_blocked() -> None:
+    mw = _make_middleware(passive_mode=True)
+    mw.route_resolver.should_bypass_check = MagicMock(return_value=False)
+    check = IpSecurityCheck(mw)
+    rc = RouteConfig()
+    rc.ip_blacklist = ["1.2.3.4"]
+    req = _make_request_with_route_config(rc)
+    req.state.client_ip = "1.2.3.4"
+    with patch(f"{_IMPL}.ip_security.ip_ban_manager") as mock_ban:
+        mock_ban.is_ip_banned = AsyncMock(return_value=False)
+        with patch(f"{_IMPL}.ip_security.log_activity", new_callable=AsyncMock):
+            result = await check.check(req)
+    assert result is None
+
+
+async def test_ip_security_passive_mode_global_blocked() -> None:
+    mw = _make_middleware(passive_mode=True)
+    mw.route_resolver.should_bypass_check = MagicMock(return_value=False)
+    check = IpSecurityCheck(mw)
+    req = MockGuardRequest()
+    req.state.client_ip = "9.9.9.9"
+    with patch(f"{_IMPL}.ip_security.ip_ban_manager") as mock_ban:
+        mock_ban.is_ip_banned = AsyncMock(return_value=False)
         with patch(
-            "guard_core.core.checks.implementations.user_agent.check_user_agent_allowed",
+            f"{_IMPL}.ip_security.is_ip_allowed",
             new_callable=AsyncMock,
             return_value=False,
         ):
-            result = await check.check(request)
-        assert result is None
-
-    async def test_blocked_by_route_config_sends_decorator_event(self) -> None:
-        middleware = _make_middleware()
-        check = UserAgentCheck(middleware)
-        request = MockGuardRequest(headers={"User-Agent": "BadBot"})
-        rc = RouteConfig()
-        rc.blocked_user_agents = ["BadBot"]
-        request.state.route_config = rc
-        with patch(
-            "guard_core.core.checks.implementations.user_agent.check_user_agent_allowed",
-            new_callable=AsyncMock,
-            return_value=False,
-        ):
-            result = await check.check(request)
-        assert result is not None
-        middleware.event_bus.send_middleware_event.assert_called()
-        call_kwargs = middleware.event_bus.send_middleware_event.call_args.kwargs
-        assert call_kwargs["event_type"] == "decorator_violation"
-
-    async def test_blocked_globally_sends_global_event(self) -> None:
-        middleware = _make_middleware()
-        check = UserAgentCheck(middleware)
-        request = MockGuardRequest(headers={"User-Agent": "BadBot"})
-        request.state.route_config = None
-        with patch(
-            "guard_core.core.checks.implementations.user_agent.check_user_agent_allowed",
-            new_callable=AsyncMock,
-            return_value=False,
-        ):
-            result = await check.check(request)
-        assert result is not None
-        call_kwargs = middleware.event_bus.send_middleware_event.call_args.kwargs
-        assert call_kwargs["event_type"] == "user_agent_blocked"
-
-
-class TestCloudProviderCheck:
-    async def test_whitelisted_ip_returns_none(self) -> None:
-        middleware = _make_middleware()
-        check = CloudProviderCheck(middleware)
-        request = MockGuardRequest()
-        request.state.is_whitelisted = True
-        result = await check.check(request)
-        assert result is None
-
-    async def test_no_client_ip_returns_none(self) -> None:
-        middleware = _make_middleware()
-        check = CloudProviderCheck(middleware)
-        request = MockGuardRequest()
-        request.state.client_ip = None
-        result = await check.check(request)
-        assert result is None
-
-    async def test_bypass_check_returns_none(self) -> None:
-        middleware = _make_middleware()
-        middleware.route_resolver.should_bypass_check.return_value = True
-        check = CloudProviderCheck(middleware)
-        request = MockGuardRequest()
-        request.state.client_ip = "1.2.3.4"
-        result = await check.check(request)
-        assert result is None
-
-    async def test_no_providers_to_check_returns_none(self) -> None:
-        middleware = _make_middleware()
-        middleware.route_resolver.should_bypass_check.return_value = False
-        middleware.route_resolver.get_cloud_providers_to_check.return_value = []
-        check = CloudProviderCheck(middleware)
-        request = MockGuardRequest()
-        request.state.client_ip = "1.2.3.4"
-        result = await check.check(request)
-        assert result is None
-
-    async def test_non_cloud_ip_passes(self) -> None:
-        middleware = _make_middleware()
-        middleware.route_resolver.should_bypass_check.return_value = False
-        middleware.route_resolver.get_cloud_providers_to_check.return_value = ["AWS"]
-        check = CloudProviderCheck(middleware)
-        request = MockGuardRequest()
-        request.state.client_ip = "1.2.3.4"
-        with patch(
-            "guard_core.core.checks.implementations.cloud_provider.cloud_handler"
-        ) as mock_cloud:
-            mock_cloud.is_cloud_ip.return_value = False
-            result = await check.check(request)
-        assert result is None
-
-    async def test_cloud_ip_blocks(self) -> None:
-        middleware = _make_middleware()
-        middleware.route_resolver.should_bypass_check.return_value = False
-        middleware.route_resolver.get_cloud_providers_to_check.return_value = ["AWS"]
-        check = CloudProviderCheck(middleware)
-        request = MockGuardRequest()
-        request.state.client_ip = "1.2.3.4"
-        with patch(
-            "guard_core.core.checks.implementations.cloud_provider.cloud_handler"
-        ) as mock_cloud:
-            mock_cloud.is_cloud_ip.return_value = True
-            result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 403
-
-    async def test_cloud_ip_passive_mode(self) -> None:
-        middleware = _make_middleware(passive_mode=True)
-        middleware.route_resolver.should_bypass_check.return_value = False
-        middleware.route_resolver.get_cloud_providers_to_check.return_value = ["AWS"]
-        check = CloudProviderCheck(middleware)
-        request = MockGuardRequest()
-        request.state.client_ip = "1.2.3.4"
-        with patch(
-            "guard_core.core.checks.implementations.cloud_provider.cloud_handler"
-        ) as mock_cloud:
-            mock_cloud.is_cloud_ip.return_value = True
-            result = await check.check(request)
-        assert result is None
-
-
-class TestCustomRequestCheck:
-    async def test_no_custom_check_returns_none(self) -> None:
-        middleware = _make_middleware()
-        check = CustomRequestCheck(middleware)
-        request = MockGuardRequest()
-        result = await check.check(request)
-        assert result is None
-
-    async def test_custom_check_passes(self) -> None:
-        async def my_check(req: GuardRequest) -> None:
-            return None
-
-        middleware = _make_middleware(custom_request_check=my_check)
-        check = CustomRequestCheck(middleware)
-        request = MockGuardRequest()
-        result = await check.check(request)
-        assert result is None
-
-    async def test_custom_check_blocks(self) -> None:
-        blocking_response = MockGuardResponse("Blocked", 429)
-
-        async def my_check(req: GuardRequest) -> GuardResponse:
-            return blocking_response
-
-        middleware = _make_middleware(custom_request_check=my_check)
-        check = CustomRequestCheck(middleware)
-        request = MockGuardRequest()
-        result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 429
-
-    async def test_custom_check_passive_mode(self) -> None:
-        blocking_response = MockGuardResponse("Blocked", 429)
-
-        async def my_check(req: GuardRequest) -> GuardResponse:
-            return blocking_response
-
-        middleware = _make_middleware(custom_request_check=my_check, passive_mode=True)
-        check = CustomRequestCheck(middleware)
-        request = MockGuardRequest()
-        result = await check.check(request)
-        assert result is None
-
-
-class TestCustomValidatorsCheck:
-    async def test_no_route_config_returns_none(self) -> None:
-        middleware = _make_middleware()
-        check = CustomValidatorsCheck(middleware)
-        request = MockGuardRequest()
-        result = await check.check(request)
-        assert result is None
-
-    async def test_no_validators_returns_none(self) -> None:
-        middleware = _make_middleware()
-        check = CustomValidatorsCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-    async def test_validator_passes(self) -> None:
-        async def good_validator(req: GuardRequest) -> None:
-            return None
-
-        middleware = _make_middleware()
-        check = CustomValidatorsCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.custom_validators = [good_validator]
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-    async def test_validator_blocks(self) -> None:
-        response = MockGuardResponse("Validation failed", 422)
-
-        async def bad_validator(req: GuardRequest) -> GuardResponse:
-            return response
-
-        middleware = _make_middleware()
-        check = CustomValidatorsCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.custom_validators = [bad_validator]
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 422
-
-    async def test_validator_blocks_passive_mode(self) -> None:
-        response = MockGuardResponse("Validation failed", 422)
-
-        async def bad_validator(req: GuardRequest) -> GuardResponse:
-            return response
-
-        middleware = _make_middleware(passive_mode=True)
-        check = CustomValidatorsCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.custom_validators = [bad_validator]
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-    async def test_first_failing_validator_stops_chain(self) -> None:
-        response = MockGuardResponse("First failed", 400)
-        call_order = []
-
-        async def first_validator(req: GuardRequest) -> GuardResponse:
-            call_order.append("first")
-            return response
-
-        async def second_validator(req: GuardRequest) -> None:
-            call_order.append("second")
-            return None
-
-        middleware = _make_middleware()
-        check = CustomValidatorsCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.custom_validators = [first_validator, second_validator]
-        request.state.route_config = rc
-        await check.check(request)
-        assert call_order == ["first"]
-
-
-class TestTimeWindowCheck:
-    async def test_no_route_config_returns_none(self) -> None:
-        middleware = _make_middleware()
-        check = TimeWindowCheck(middleware)
-        request = MockGuardRequest()
-        result = await check.check(request)
-        assert result is None
-
-    async def test_no_time_restrictions_returns_none(self) -> None:
-        middleware = _make_middleware()
-        check = TimeWindowCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-    async def test_within_time_window_passes(self) -> None:
-        middleware = _make_middleware()
-        check = TimeWindowCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.time_restrictions = {"start": "00:00", "end": "23:59", "timezone": "UTC"}
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-    async def test_outside_time_window_blocks(self) -> None:
-        middleware = _make_middleware()
-        check = TimeWindowCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.time_restrictions = {"start": "00:00", "end": "00:01", "timezone": "UTC"}
-        request.state.route_config = rc
-        with patch(
-            "guard_core.core.checks.implementations.time_window.datetime"
-        ) as mock_dt:
-            mock_now = MagicMock()
-            mock_now.strftime.return_value = "12:00"
-            mock_dt.now.return_value = mock_now
-            mock_dt.side_effect = lambda *a, **kw: MagicMock()
-            result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 403
-
-    async def test_outside_time_window_passive_mode(self) -> None:
-        middleware = _make_middleware(passive_mode=True)
-        check = TimeWindowCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.time_restrictions = {"start": "00:00", "end": "00:01", "timezone": "UTC"}
-        request.state.route_config = rc
-        with patch(
-            "guard_core.core.checks.implementations.time_window.datetime"
-        ) as mock_dt:
-            mock_now = MagicMock()
-            mock_now.strftime.return_value = "12:00"
-            mock_dt.now.return_value = mock_now
-            result = await check.check(request)
-        assert result is None
-
-    async def test_overnight_window_wraps(self) -> None:
-        middleware = _make_middleware()
-        check = TimeWindowCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.time_restrictions = {"start": "22:00", "end": "06:00", "timezone": "UTC"}
-        request.state.route_config = rc
-        with patch(
-            "guard_core.core.checks.implementations.time_window.datetime"
-        ) as mock_dt:
-            mock_now = MagicMock()
-            mock_now.strftime.return_value = "23:00"
-            mock_dt.now.return_value = mock_now
-            result = await check.check(request)
-        assert result is None
-
-    async def test_invalid_timezone_falls_back_to_utc(self) -> None:
-        middleware = _make_middleware()
-        check = TimeWindowCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.time_restrictions = {
-            "start": "00:00",
-            "end": "23:59",
-            "timezone": "Invalid/Timezone",
-        }
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-    async def test_missing_keys_returns_none_via_error_handling(self) -> None:
-        middleware = _make_middleware()
-        check = TimeWindowCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.time_restrictions = {"timezone": "UTC"}
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-
-class TestRouteConfigCheck:
-    async def test_sets_route_config_on_state(self) -> None:
-        middleware = _make_middleware()
-        mock_rc = RouteConfig()
-        middleware.route_resolver.get_route_config.return_value = mock_rc
-        check = RouteConfigCheck(middleware)
-        request = MockGuardRequest(client_host="127.0.0.1")
-        with patch(
-            "guard_core.core.checks.implementations.route_config.extract_client_ip",
-            new_callable=AsyncMock,
-            return_value="127.0.0.1",
-        ):
-            result = await check.check(request)
-        assert result is None
-        assert request.state.route_config is mock_rc
-        assert request.state.client_ip == "127.0.0.1"
-
-    async def test_always_returns_none(self) -> None:
-        middleware = _make_middleware()
-        middleware.route_resolver.get_route_config.return_value = None
-        check = RouteConfigCheck(middleware)
-        request = MockGuardRequest()
-        with patch(
-            "guard_core.core.checks.implementations.route_config.extract_client_ip",
-            new_callable=AsyncMock,
-            return_value="127.0.0.1",
-        ):
-            result = await check.check(request)
-        assert result is None
-
-
-class TestRequestLoggingCheck:
-    async def test_always_returns_none(self) -> None:
-        middleware = _make_middleware()
-        check = RequestLoggingCheck(middleware)
-        request = MockGuardRequest()
-        with patch(
-            "guard_core.core.checks.implementations.request_logging.log_activity",
-            new_callable=AsyncMock,
-        ) as mock_log:
-            result = await check.check(request)
-        assert result is None
-        mock_log.assert_called_once()
-
-
-class TestCloudIpRefreshCheck:
-    async def test_no_cloud_providers_returns_none(self) -> None:
-        middleware = _make_middleware()
-        check = CloudIpRefreshCheck(middleware)
-        request = MockGuardRequest()
-        result = await check.check(request)
-        assert result is None
-        middleware.refresh_cloud_ip_ranges.assert_not_called()
-
-    async def test_refresh_not_needed_returns_none(self) -> None:
-        middleware = _make_middleware(block_cloud_providers={"AWS"})
-        middleware.last_cloud_ip_refresh = time.time()
-        check = CloudIpRefreshCheck(middleware)
-        request = MockGuardRequest()
-        result = await check.check(request)
-        assert result is None
-        middleware.refresh_cloud_ip_ranges.assert_not_called()
-
-    async def test_refresh_triggered_when_stale(self) -> None:
-        middleware = _make_middleware(block_cloud_providers={"AWS"})
-        middleware.last_cloud_ip_refresh = 0
-        check = CloudIpRefreshCheck(middleware)
-        request = MockGuardRequest()
-        result = await check.check(request)
-        assert result is None
-        middleware.refresh_cloud_ip_ranges.assert_called_once()
-
-    async def test_always_returns_none(self) -> None:
-        middleware = _make_middleware(block_cloud_providers={"AWS"})
-        middleware.last_cloud_ip_refresh = 0
-        check = CloudIpRefreshCheck(middleware)
-        request = MockGuardRequest()
-        result = await check.check(request)
-        assert result is None
-
-
-class TestIpSecurityCheck:
-    async def test_no_client_ip_returns_none(self) -> None:
-        from guard_core.core.checks.implementations.ip_security import IpSecurityCheck
-
-        middleware = _make_middleware()
-        check = IpSecurityCheck(middleware)
-        request = MockGuardRequest()
-        result = await check.check(request)
-        assert result is None
-
-    async def test_banned_ip_blocks(self) -> None:
-        from guard_core.core.checks.implementations.ip_security import IpSecurityCheck
-
-        middleware = _make_middleware()
-        middleware.route_resolver.should_bypass_check.return_value = False
-        check = IpSecurityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.client_ip = "1.2.3.4"
-        request.state.route_config = None
-
-        with patch(
-            "guard_core.core.checks.implementations.ip_security.ip_ban_manager"
-        ) as mock_ban:
-            mock_ban.is_ip_banned = AsyncMock(return_value=True)
-            result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 403
-
-    async def test_banned_ip_passive_mode(self) -> None:
-        from guard_core.core.checks.implementations.ip_security import IpSecurityCheck
-
-        middleware = _make_middleware(passive_mode=True)
-        middleware.route_resolver.should_bypass_check.return_value = False
-        check = IpSecurityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.client_ip = "1.2.3.4"
-        request.state.route_config = None
-
-        with patch(
-            "guard_core.core.checks.implementations.ip_security.ip_ban_manager"
-        ) as mock_ban:
-            mock_ban.is_ip_banned = AsyncMock(return_value=True)
-            result = await check.check(request)
-        assert result is None
-
-    async def test_bypass_ip_check(self) -> None:
-        from guard_core.core.checks.implementations.ip_security import IpSecurityCheck
-
-        middleware = _make_middleware()
-        middleware.route_resolver.should_bypass_check.side_effect = lambda name, rc: (
-            name == "ip"
-        )
-        check = IpSecurityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.client_ip = "1.2.3.4"
-        request.state.route_config = RouteConfig()
-
-        with patch(
-            "guard_core.core.checks.implementations.ip_security.ip_ban_manager"
-        ) as mock_ban:
-            mock_ban.is_ip_banned = AsyncMock(return_value=False)
-            result = await check.check(request)
-        assert result is None
-
-    async def test_route_ip_restriction_denied(self) -> None:
-        from guard_core.core.checks.implementations.ip_security import IpSecurityCheck
-
-        middleware = _make_middleware()
-        middleware.route_resolver.should_bypass_check.return_value = False
-        check = IpSecurityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.client_ip = "1.2.3.4"
-        rc = RouteConfig()
-        rc.ip_blacklist = ["1.2.3.4"]
-        request.state.route_config = rc
-
-        with patch(
-            "guard_core.core.checks.implementations.ip_security.ip_ban_manager"
-        ) as mock_ban:
-            mock_ban.is_ip_banned = AsyncMock(return_value=False)
-            result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 403
-
-    async def test_global_ip_restriction_denied(self) -> None:
-        from guard_core.core.checks.implementations.ip_security import IpSecurityCheck
-
-        middleware = _make_middleware(blacklist=["1.2.3.4"])
-        middleware.route_resolver.should_bypass_check.return_value = False
-        middleware.geo_ip_handler = None
-        check = IpSecurityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.client_ip = "1.2.3.4"
-        request.state.route_config = None
-
-        with (
-            patch(
-                "guard_core.core.checks.implementations.ip_security.ip_ban_manager"
-            ) as mock_ban,
-            patch(
-                "guard_core.core.checks.implementations.ip_security.is_ip_allowed",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
-        ):
-            mock_ban.is_ip_banned = AsyncMock(return_value=False)
-            result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 403
-
-    async def test_global_ip_allowed(self) -> None:
-        from guard_core.core.checks.implementations.ip_security import IpSecurityCheck
-
-        middleware = _make_middleware()
-        middleware.route_resolver.should_bypass_check.return_value = False
-        middleware.geo_ip_handler = None
-        check = IpSecurityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.client_ip = "1.2.3.4"
-        request.state.route_config = None
-
-        with (
-            patch(
-                "guard_core.core.checks.implementations.ip_security.ip_ban_manager"
-            ) as mock_ban,
-            patch(
-                "guard_core.core.checks.implementations.ip_security.is_ip_allowed",
-                new_callable=AsyncMock,
-                return_value=True,
-            ),
-        ):
-            mock_ban.is_ip_banned = AsyncMock(return_value=False)
-            result = await check.check(request)
-        assert result is None
-
-
-class TestRateLimitCheck:
-    async def test_whitelisted_returns_none(self) -> None:
-        from guard_core.core.checks.implementations.rate_limit import RateLimitCheck
-
-        middleware = _make_middleware()
-        check = RateLimitCheck(middleware)
-        request = MockGuardRequest()
-        request.state.is_whitelisted = True
-        result = await check.check(request)
-        assert result is None
-
-    async def test_no_client_ip_returns_none(self) -> None:
-        from guard_core.core.checks.implementations.rate_limit import RateLimitCheck
-
-        middleware = _make_middleware()
-        check = RateLimitCheck(middleware)
-        request = MockGuardRequest()
-        request.state.is_whitelisted = False
-        result = await check.check(request)
-        assert result is None
-
-    async def test_bypass_rate_limit(self) -> None:
-        from guard_core.core.checks.implementations.rate_limit import RateLimitCheck
-
-        middleware = _make_middleware()
-        middleware.route_resolver.should_bypass_check.return_value = True
-        check = RateLimitCheck(middleware)
-        request = MockGuardRequest()
-        request.state.is_whitelisted = False
-        request.state.client_ip = "1.2.3.4"
-        rc = RouteConfig()
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-    async def test_endpoint_rate_limit_exceeded(self) -> None:
-        from guard_core.core.checks.implementations.rate_limit import RateLimitCheck
-
-        middleware = _make_middleware(endpoint_rate_limits={"/api/test": (1, 60)})
-        middleware.route_resolver.should_bypass_check.return_value = False
-        middleware.rate_limit_handler.check_rate_limit = AsyncMock(
-            return_value=MockGuardResponse("Rate limited", 429)
-        )
-        check = RateLimitCheck(middleware)
-        request = MockGuardRequest(path="/api/test")
-        request.state.is_whitelisted = False
-        request.state.client_ip = "1.2.3.4"
-        request.state.route_config = None
-        result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 429
-
-    async def test_route_rate_limit(self) -> None:
-        from guard_core.core.checks.implementations.rate_limit import RateLimitCheck
-
-        middleware = _make_middleware()
-        middleware.route_resolver.should_bypass_check.return_value = False
-        middleware.rate_limit_handler.check_rate_limit = AsyncMock(
-            return_value=MockGuardResponse("Rate limited", 429)
-        )
-        check = RateLimitCheck(middleware)
-        request = MockGuardRequest(path="/test")
-        request.state.is_whitelisted = False
-        request.state.client_ip = "1.2.3.4"
-        rc = RouteConfig()
-        rc.rate_limit = 5
-        rc.rate_limit_window = 60
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is not None
-
-    async def test_geo_rate_limit(self) -> None:
-        from guard_core.core.checks.implementations.rate_limit import RateLimitCheck
-
-        middleware = _make_middleware()
-        middleware.route_resolver.should_bypass_check.return_value = False
-        middleware.rate_limit_handler.check_rate_limit = AsyncMock(
-            return_value=MockGuardResponse("Rate limited", 429)
-        )
-        geo = MagicMock()
-        geo.get_country.return_value = "US"
-        middleware.config.geo_ip_handler = geo
-        check = RateLimitCheck(middleware)
-        request = MockGuardRequest(path="/test")
-        request.state.is_whitelisted = False
-        request.state.client_ip = "1.2.3.4"
-        rc = RouteConfig()
-        rc.geo_rate_limits = {"US": (5, 60)}
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is not None
-
-    async def test_geo_rate_limit_wildcard(self) -> None:
-        from guard_core.core.checks.implementations.rate_limit import RateLimitCheck
-
-        middleware = _make_middleware()
-        middleware.route_resolver.should_bypass_check.return_value = False
-        middleware.rate_limit_handler.check_rate_limit = AsyncMock(
-            return_value=MockGuardResponse("Rate limited", 429)
-        )
-        geo = MagicMock()
-        geo.get_country.return_value = "FR"
-        middleware.config.geo_ip_handler = geo
-        check = RateLimitCheck(middleware)
-        request = MockGuardRequest(path="/test")
-        request.state.is_whitelisted = False
-        request.state.client_ip = "1.2.3.4"
-        rc = RouteConfig()
-        rc.geo_rate_limits = {"*": (10, 60)}
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is not None
-
-    async def test_global_rate_limit_passive_mode(self) -> None:
-        from guard_core.core.checks.implementations.rate_limit import RateLimitCheck
-
-        middleware = _make_middleware(passive_mode=True)
-        middleware.route_resolver.should_bypass_check.return_value = False
-        middleware.rate_limit_handler.check_rate_limit = AsyncMock(
-            return_value=MockGuardResponse("Rate limited", 429)
-        )
-        check = RateLimitCheck(middleware)
-        request = MockGuardRequest()
-        request.state.is_whitelisted = False
-        request.state.client_ip = "1.2.3.4"
-        request.state.route_config = None
-        result = await check.check(request)
-        assert result is None
-
-    async def test_endpoint_rate_limit_passive_mode(self) -> None:
-        from guard_core.core.checks.implementations.rate_limit import RateLimitCheck
-
-        middleware = _make_middleware(
-            passive_mode=True, endpoint_rate_limits={"/api": (1, 60)}
-        )
-        middleware.route_resolver.should_bypass_check.return_value = False
-        middleware.rate_limit_handler.check_rate_limit = AsyncMock(
-            return_value=MockGuardResponse("Rate limited", 429)
-        )
-        check = RateLimitCheck(middleware)
-        request = MockGuardRequest(path="/api")
-        request.state.is_whitelisted = False
-        request.state.client_ip = "1.2.3.4"
-        request.state.route_config = None
-        result = await check.check(request)
-        assert result is None
-
-
-class TestSuspiciousActivityCheck:
-    async def test_whitelisted_returns_none(self) -> None:
-        from guard_core.core.checks.implementations.suspicious_activity import (
-            SuspiciousActivityCheck,
-        )
-
-        middleware = _make_middleware()
-        check = SuspiciousActivityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.is_whitelisted = True
-        result = await check.check(request)
-        assert result is None
-
-    async def test_no_client_ip_returns_none(self) -> None:
-        from guard_core.core.checks.implementations.suspicious_activity import (
-            SuspiciousActivityCheck,
-        )
-
-        middleware = _make_middleware()
-        check = SuspiciousActivityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.is_whitelisted = False
-        result = await check.check(request)
-        assert result is None
-
-    async def test_disabled_by_decorator(self) -> None:
-        from guard_core.core.checks.implementations.suspicious_activity import (
-            SuspiciousActivityCheck,
-        )
-
-        middleware = _make_middleware()
-        check = SuspiciousActivityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.is_whitelisted = False
-        request.state.client_ip = "1.2.3.4"
-        request.state.route_config = None
-
-        with patch(
-            "guard_core.core.checks.implementations.suspicious_activity.detect_penetration_patterns",
-            new_callable=AsyncMock,
-            return_value=(False, "disabled_by_decorator"),
-        ):
-            result = await check.check(request)
-        assert result is None
-
-    async def test_no_detection(self) -> None:
-        from guard_core.core.checks.implementations.suspicious_activity import (
-            SuspiciousActivityCheck,
-        )
-
-        middleware = _make_middleware()
-        check = SuspiciousActivityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.is_whitelisted = False
-        request.state.client_ip = "1.2.3.4"
-        request.state.route_config = None
-
-        with patch(
-            "guard_core.core.checks.implementations.suspicious_activity.detect_penetration_patterns",
-            new_callable=AsyncMock,
-            return_value=(False, "not_enabled"),
-        ):
-            result = await check.check(request)
-        assert result is None
-
-    async def test_detection_active_mode(self) -> None:
-        from guard_core.core.checks.implementations.suspicious_activity import (
-            SuspiciousActivityCheck,
-        )
-
-        middleware = _make_middleware()
-        check = SuspiciousActivityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.is_whitelisted = False
-        request.state.client_ip = "1.2.3.4"
-        request.state.route_config = None
-
-        with patch(
-            "guard_core.core.checks.implementations.suspicious_activity.detect_penetration_patterns",
-            new_callable=AsyncMock,
-            return_value=(True, "SQL injection"),
-        ):
-            result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 400
-
-    async def test_detection_passive_mode(self) -> None:
-        from guard_core.core.checks.implementations.suspicious_activity import (
-            SuspiciousActivityCheck,
-        )
-
-        middleware = _make_middleware(passive_mode=True)
-        check = SuspiciousActivityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.is_whitelisted = False
-        request.state.client_ip = "1.2.3.4"
-        request.state.route_config = None
-
-        with patch(
-            "guard_core.core.checks.implementations.suspicious_activity.detect_penetration_patterns",
-            new_callable=AsyncMock,
-            return_value=(True, "XSS attempt"),
-        ):
-            result = await check.check(request)
-        assert result is None
-
-    async def test_detection_auto_ban(self) -> None:
-        from guard_core.core.checks.implementations.suspicious_activity import (
-            SuspiciousActivityCheck,
-        )
-
-        middleware = _make_middleware(enable_ip_banning=True, auto_ban_threshold=1)
-        middleware.suspicious_request_counts = {"1.2.3.4": 1}
-        check = SuspiciousActivityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.is_whitelisted = False
-        request.state.client_ip = "1.2.3.4"
-        request.state.route_config = None
-
-        with (
-            patch(
-                "guard_core.core.checks.implementations.suspicious_activity.detect_penetration_patterns",
-                new_callable=AsyncMock,
-                return_value=(True, "SQL injection"),
-            ),
-            patch(
-                "guard_core.core.checks.implementations.suspicious_activity.ip_ban_manager"
-            ) as mock_ban,
-        ):
+            with patch(f"{_IMPL}.ip_security.log_activity", new_callable=AsyncMock):
+                result = await check.check(req)
+    assert result is None
+
+
+async def test_rate_limit_check_name() -> None:
+    mw = _make_middleware()
+    check = RateLimitCheck(mw)
+    assert check.check_name == "rate_limit"
+
+
+async def test_rate_limit_whitelisted() -> None:
+    mw = _make_middleware()
+    check = RateLimitCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = True
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_rate_limit_no_client_ip() -> None:
+    mw = _make_middleware()
+    check = RateLimitCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = False
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_rate_limit_bypass() -> None:
+    mw = _make_middleware()
+    mw.route_resolver.should_bypass_check = MagicMock(return_value=True)
+    check = RateLimitCheck(mw)
+    rc = RouteConfig()
+    req = _make_request_with_route_config(rc)
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_rate_limit_endpoint_specific() -> None:
+    mw = _make_middleware(endpoint_rate_limits={"/api": (5, 60)})
+    blocked_resp = MockGuardResponse("rate limited", 429)
+    mw.rate_limit_handler.check_rate_limit = AsyncMock(return_value=blocked_resp)
+    check = RateLimitCheck(mw)
+    req = MockGuardRequest(path="/api")
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    result = await check.check(req)
+    assert result is not None
+    assert result.status_code == 429
+
+
+async def test_rate_limit_route_specific() -> None:
+    mw = _make_middleware()
+    blocked_resp = MockGuardResponse("rate limited", 429)
+    mw.rate_limit_handler.check_rate_limit = AsyncMock(return_value=blocked_resp)
+    check = RateLimitCheck(mw)
+    rc = RouteConfig()
+    rc.rate_limit = 10
+    rc.rate_limit_window = 30
+    req = _make_request_with_route_config(rc, path="/test")
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    result = await check.check(req)
+    assert result is not None
+
+
+async def test_rate_limit_global() -> None:
+    mw = _make_middleware()
+    check = RateLimitCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_rate_limit_passive_mode() -> None:
+    mw = _make_middleware(passive_mode=True, endpoint_rate_limits={"/api": (5, 60)})
+    blocked_resp = MockGuardResponse("rate limited", 429)
+    mw.rate_limit_handler.check_rate_limit = AsyncMock(return_value=blocked_resp)
+    check = RateLimitCheck(mw)
+    req = MockGuardRequest(path="/api")
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_rate_limit_global_passive_mode() -> None:
+    mw = _make_middleware(passive_mode=True)
+    blocked_resp = MockGuardResponse("rate limited", 429)
+    mw.rate_limit_handler.check_rate_limit = AsyncMock(return_value=blocked_resp)
+    check = RateLimitCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_rate_limit_geo_rate_limit() -> None:
+    mw = _make_middleware()
+    mw.config.geo_ip_handler = MagicMock()
+    mw.config.geo_ip_handler.get_country = MagicMock(return_value="US")
+    blocked_resp = MockGuardResponse("rate limited", 429)
+    mw.rate_limit_handler.check_rate_limit = AsyncMock(return_value=blocked_resp)
+    check = RateLimitCheck(mw)
+    rc = RouteConfig()
+    rc.geo_rate_limits = {"US": (5, 60)}
+    req = _make_request_with_route_config(rc, path="/test")
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    result = await check.check(req)
+    assert result is not None
+
+
+async def test_rate_limit_geo_wildcard() -> None:
+    mw = _make_middleware()
+    mw.config.geo_ip_handler = MagicMock()
+    mw.config.geo_ip_handler.get_country = MagicMock(return_value="FR")
+    blocked_resp = MockGuardResponse("rate limited", 429)
+    mw.rate_limit_handler.check_rate_limit = AsyncMock(return_value=blocked_resp)
+    check = RateLimitCheck(mw)
+    rc = RouteConfig()
+    rc.geo_rate_limits = {"*": (5, 60)}
+    req = _make_request_with_route_config(rc, path="/test")
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    result = await check.check(req)
+    assert result is not None
+
+
+async def test_rate_limit_geo_no_handler() -> None:
+    mw = _make_middleware()
+    mw.config.geo_ip_handler = None
+    check = RateLimitCheck(mw)
+    rc = RouteConfig()
+    rc.geo_rate_limits = {"US": (5, 60)}
+    req = _make_request_with_route_config(rc, path="/test")
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_rate_limit_geo_no_match() -> None:
+    mw = _make_middleware()
+    mw.config.geo_ip_handler = MagicMock()
+    mw.config.geo_ip_handler.get_country = MagicMock(return_value="FR")
+    check = RateLimitCheck(mw)
+    rc = RouteConfig()
+    rc.geo_rate_limits = {"US": (5, 60)}
+    req = _make_request_with_route_config(rc, path="/test")
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_suspicious_activity_check_name() -> None:
+    mw = _make_middleware()
+    check = SuspiciousActivityCheck(mw)
+    assert check.check_name == "suspicious_activity"
+
+
+async def test_suspicious_activity_whitelisted() -> None:
+    mw = _make_middleware()
+    check = SuspiciousActivityCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = True
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_suspicious_activity_no_client_ip() -> None:
+    mw = _make_middleware()
+    check = SuspiciousActivityCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = False
+    result = await check.check(req)
+    assert result is None
+
+
+async def test_suspicious_activity_not_detected() -> None:
+    mw = _make_middleware()
+    check = SuspiciousActivityCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    with patch(
+        f"{_IMPL}.suspicious_activity.detect_penetration_patterns",
+        new_callable=AsyncMock,
+        return_value=(False, "not_enabled"),
+    ):
+        result = await check.check(req)
+    assert result is None
+
+
+async def test_suspicious_activity_disabled_by_decorator() -> None:
+    mw = _make_middleware()
+    check = SuspiciousActivityCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    with patch(
+        f"{_IMPL}.suspicious_activity.detect_penetration_patterns",
+        new_callable=AsyncMock,
+        return_value=(False, "disabled_by_decorator"),
+    ):
+        result = await check.check(req)
+    assert result is None
+    mw.event_bus.send_middleware_event.assert_called_once()
+
+
+async def test_suspicious_activity_detected_active() -> None:
+    mw = _make_middleware()
+    mw.suspicious_request_counts = {}
+    mw.create_error_response = AsyncMock(return_value=MockGuardResponse("bad", 400))
+    check = SuspiciousActivityCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    with patch(
+        f"{_IMPL}.suspicious_activity.detect_penetration_patterns",
+        new_callable=AsyncMock,
+        return_value=(True, "sql_injection"),
+    ):
+        with patch(f"{_IMPL}.suspicious_activity.log_activity", new_callable=AsyncMock):
+            result = await check.check(req)
+    assert result is not None
+    assert result.status_code == 400
+
+
+async def test_suspicious_activity_detected_passive() -> None:
+    mw = _make_middleware(passive_mode=True)
+    mw.suspicious_request_counts = {}
+    check = SuspiciousActivityCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    with patch(
+        f"{_IMPL}.suspicious_activity.detect_penetration_patterns",
+        new_callable=AsyncMock,
+        return_value=(True, "xss"),
+    ):
+        with patch(f"{_IMPL}.suspicious_activity.log_activity", new_callable=AsyncMock):
+            result = await check.check(req)
+    assert result is None
+
+
+async def test_suspicious_activity_auto_ban() -> None:
+    mw = _make_middleware(
+        enable_ip_banning=True,
+        auto_ban_threshold=2,
+        auto_ban_duration=300,
+    )
+    mw.suspicious_request_counts = {"1.2.3.4": 2}
+    mw.create_error_response = AsyncMock(return_value=MockGuardResponse("banned", 403))
+    check = SuspiciousActivityCheck(mw)
+    req = MockGuardRequest()
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    with patch(
+        f"{_IMPL}.suspicious_activity.detect_penetration_patterns",
+        new_callable=AsyncMock,
+        return_value=(True, "sqli"),
+    ):
+        with patch(f"{_IMPL}.suspicious_activity.ip_ban_manager") as mock_ban:
             mock_ban.ban_ip = AsyncMock()
-            result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 403
+            with patch(
+                f"{_IMPL}.suspicious_activity.log_activity", new_callable=AsyncMock
+            ):
+                result = await check.check(req)
+    assert result is not None
+    assert result.status_code == 403
 
 
-class TestReferrerCheck:
-    async def test_no_route_config(self) -> None:
-        from guard_core.core.checks.implementations.referrer import ReferrerCheck
-
-        middleware = _make_middleware()
-        check = ReferrerCheck(middleware)
-        request = MockGuardRequest()
-        result = await check.check(request)
-        assert result is None
-
-    async def test_no_require_referrer(self) -> None:
-        from guard_core.core.checks.implementations.referrer import ReferrerCheck
-
-        middleware = _make_middleware()
-        check = ReferrerCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-    async def test_missing_referrer(self) -> None:
-        from guard_core.core.checks.implementations.referrer import ReferrerCheck
-
-        middleware = _make_middleware()
-        check = ReferrerCheck(middleware)
-        request = MockGuardRequest(headers={})
-        rc = RouteConfig()
-        rc.require_referrer = ["example.com"]
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 403
-
-    async def test_invalid_referrer(self) -> None:
-        from guard_core.core.checks.implementations.referrer import ReferrerCheck
-
-        middleware = _make_middleware()
-        check = ReferrerCheck(middleware)
-        request = MockGuardRequest(headers={"referer": "https://evil.com/page"})
-        rc = RouteConfig()
-        rc.require_referrer = ["example.com"]
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 403
-
-    async def test_valid_referrer(self) -> None:
-        from guard_core.core.checks.implementations.referrer import ReferrerCheck
-
-        middleware = _make_middleware()
-        check = ReferrerCheck(middleware)
-        request = MockGuardRequest(headers={"referer": "https://example.com/page"})
-        rc = RouteConfig()
-        rc.require_referrer = ["example.com"]
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-    async def test_missing_referrer_passive(self) -> None:
-        from guard_core.core.checks.implementations.referrer import ReferrerCheck
-
-        middleware = _make_middleware(passive_mode=True)
-        check = ReferrerCheck(middleware)
-        request = MockGuardRequest(headers={})
-        rc = RouteConfig()
-        rc.require_referrer = ["example.com"]
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
+async def test_custom_request_check_name() -> None:
+    mw = _make_middleware()
+    check = CustomRequestCheck(mw)
+    assert check.check_name == "custom_request"
 
 
-class TestRequestSizeContentCheck:
-    async def test_no_route_config(self) -> None:
-        from guard_core.core.checks.implementations.request_size_content import (
-            RequestSizeContentCheck,
-        )
-
-        middleware = _make_middleware()
-        check = RequestSizeContentCheck(middleware)
-        request = MockGuardRequest()
-        result = await check.check(request)
-        assert result is None
-
-    async def test_size_exceeded(self) -> None:
-        from guard_core.core.checks.implementations.request_size_content import (
-            RequestSizeContentCheck,
-        )
-
-        middleware = _make_middleware()
-        check = RequestSizeContentCheck(middleware)
-        request = MockGuardRequest(headers={"content-length": "5000"})
-        rc = RouteConfig()
-        rc.max_request_size = 1000
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 413
-
-    async def test_size_ok(self) -> None:
-        from guard_core.core.checks.implementations.request_size_content import (
-            RequestSizeContentCheck,
-        )
-
-        middleware = _make_middleware()
-        check = RequestSizeContentCheck(middleware)
-        request = MockGuardRequest(headers={"content-length": "500"})
-        rc = RouteConfig()
-        rc.max_request_size = 1000
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-    async def test_content_type_blocked(self) -> None:
-        from guard_core.core.checks.implementations.request_size_content import (
-            RequestSizeContentCheck,
-        )
-
-        middleware = _make_middleware()
-        check = RequestSizeContentCheck(middleware)
-        request = MockGuardRequest(headers={"content-type": "text/plain"})
-        rc = RouteConfig()
-        rc.allowed_content_types = ["application/json"]
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is not None
-        assert result.status_code == 415
-
-    async def test_content_type_allowed(self) -> None:
-        from guard_core.core.checks.implementations.request_size_content import (
-            RequestSizeContentCheck,
-        )
-
-        middleware = _make_middleware()
-        check = RequestSizeContentCheck(middleware)
-        request = MockGuardRequest(headers={"content-type": "application/json"})
-        rc = RouteConfig()
-        rc.allowed_content_types = ["application/json"]
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-    async def test_size_exceeded_passive(self) -> None:
-        from guard_core.core.checks.implementations.request_size_content import (
-            RequestSizeContentCheck,
-        )
-
-        middleware = _make_middleware(passive_mode=True)
-        check = RequestSizeContentCheck(middleware)
-        request = MockGuardRequest(headers={"content-length": "5000"})
-        rc = RouteConfig()
-        rc.max_request_size = 1000
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
+async def test_custom_request_no_check() -> None:
+    mw = _make_middleware()
+    check = CustomRequestCheck(mw)
+    req = MockGuardRequest()
+    result = await check.check(req)
+    assert result is None
 
 
-class TestCheckNames:
-    def test_all_check_names(self) -> None:
-        middleware = _make_middleware()
-        checks = [
-            (EmergencyModeCheck, "emergency_mode"),
-            (HttpsEnforcementCheck, "https_enforcement"),
-            (RequiredHeadersCheck, "required_headers"),
-            (AuthenticationCheck, "authentication"),
-            (UserAgentCheck, "user_agent"),
-            (CloudProviderCheck, "cloud_provider"),
-            (CustomRequestCheck, "custom_request"),
-            (CustomValidatorsCheck, "custom_validators"),
-            (TimeWindowCheck, "time_window"),
-            (RouteConfigCheck, "route_config"),
-            (RequestLoggingCheck, "request_logging"),
-            (CloudIpRefreshCheck, "cloud_ip_refresh"),
-            (ReferrerCheck, "referrer"),
-            (RequestSizeContentCheck, "request_size_content"),
-            (RateLimitCheck, "rate_limit"),
-            (SuspiciousActivityCheck, "suspicious_activity"),
-            (IpSecurityCheck, "ip_security"),
-        ]
-        for check_cls, expected_name in checks:
-            check = check_cls(middleware)
-            assert check.check_name == expected_name
+async def test_custom_request_returns_none() -> None:
+    mw = _make_middleware(custom_request_check=AsyncMock(return_value=None))
+    check = CustomRequestCheck(mw)
+    req = MockGuardRequest()
+    result = await check.check(req)
+    assert result is None
 
 
-class TestIpSecurityCheckPassiveModeLines:
-    async def test_bypass_ip_ban_check(self) -> None:
-        middleware = _make_middleware()
-        middleware.route_resolver.should_bypass_check.return_value = True
-        check = IpSecurityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.client_ip = "1.2.3.4"
-        request.state.route_config = RouteConfig()
-        result = await check._check_banned_ip(request, "1.2.3.4", RouteConfig())
-        assert result is None
-
-    async def test_route_ip_restriction_allowed(self) -> None:
-        middleware = _make_middleware()
-        check = IpSecurityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.client_ip = "1.2.3.4"
-
-        with patch(
-            "guard_core.core.checks.implementations.ip_security.check_route_ip_access",
-            new_callable=AsyncMock,
-            return_value=True,
-        ):
-            result = await check._check_route_ip_restrictions(
-                request, "1.2.3.4", RouteConfig()
-            )
-        assert result is None
-
-    async def test_route_ip_restriction_passive_mode(self) -> None:
-        middleware = _make_middleware(passive_mode=True)
-        check = IpSecurityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.client_ip = "1.2.3.4"
-        rc = RouteConfig()
-        rc.ip_blacklist = ["1.2.3.4"]
-
-        with patch(
-            "guard_core.core.checks.implementations.ip_security.check_route_ip_access",
-            new_callable=AsyncMock,
-            return_value=False,
-        ):
-            result = await check._check_route_ip_restrictions(request, "1.2.3.4", rc)
-        assert result is None
-
-    async def test_global_ip_restriction_passive_mode(self) -> None:
-        middleware = _make_middleware(passive_mode=True)
-        middleware.geo_ip_handler = None
-        check = IpSecurityCheck(middleware)
-        request = MockGuardRequest()
-        request.state.client_ip = "1.2.3.4"
-
-        with patch(
-            "guard_core.core.checks.implementations.ip_security.is_ip_allowed",
-            new_callable=AsyncMock,
-            return_value=False,
-        ):
-            result = await check._check_global_ip_restrictions(request, "1.2.3.4")
-        assert result is None
+async def test_custom_request_blocks() -> None:
+    blocked_resp = MockGuardResponse("blocked", 403)
+    custom_fn = AsyncMock(return_value=blocked_resp)
+    custom_fn.__name__ = "my_custom_check"
+    mw = _make_middleware(custom_request_check=custom_fn)
+    check = CustomRequestCheck(mw)
+    req = MockGuardRequest()
+    result = await check.check(req)
+    assert result is not None
+    assert result.status_code == 403
 
 
-class TestRateLimitCheckLines:
-    async def test_geo_rate_limit_no_geo_handler(self) -> None:
-        middleware = _make_middleware()
-        middleware.config.geo_ip_handler = None
-        check = RateLimitCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.geo_rate_limits = {"US": (10, 60)}
-        result = await check._check_geo_rate_limit(request, "1.2.3.4", rc)
-        assert result is None
-
-    async def test_geo_rate_limit_wildcard(self) -> None:
-        middleware = _make_middleware()
-        geo = MagicMock()
-        geo.get_country.return_value = "FR"
-        middleware.config.geo_ip_handler = geo
-        middleware.rate_limit_handler = MagicMock()
-        middleware.rate_limit_handler.check_rate_limit = AsyncMock(return_value=None)
-        check = RateLimitCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.geo_rate_limits = {"*": (10, 60)}
-        result = await check._check_geo_rate_limit(request, "1.2.3.4", rc)
-        assert result is None
-
-    async def test_global_rate_limit_passive_mode(self) -> None:
-        middleware = _make_middleware(passive_mode=True)
-        middleware.rate_limit_handler = MagicMock()
-        middleware.rate_limit_handler.check_rate_limit = AsyncMock(
-            return_value=MockGuardResponse("Too many", 429)
-        )
-        check = RateLimitCheck(middleware)
-        request = MockGuardRequest()
-        result = await check._check_global_rate_limit(request, "1.2.3.4")
-        assert result is None
+async def test_custom_request_passive_mode() -> None:
+    blocked_resp = MockGuardResponse("blocked", 403)
+    custom_fn = AsyncMock(return_value=blocked_resp)
+    custom_fn.__name__ = "my_check"
+    mw = _make_middleware(passive_mode=True, custom_request_check=custom_fn)
+    check = CustomRequestCheck(mw)
+    req = MockGuardRequest()
+    result = await check.check(req)
+    assert result is None
 
 
-class TestRateLimitCheckGeoNoMatch:
-    async def test_geo_rate_limit_country_not_in_limits(self) -> None:
-        middleware = _make_middleware()
-        geo = MagicMock()
-        geo.get_country.return_value = "FR"
-        middleware.config.geo_ip_handler = geo
-        check = RateLimitCheck(middleware)
-        request = MockGuardRequest()
-        rc = RouteConfig()
-        rc.geo_rate_limits = {"US": (10, 60)}
-        result = await check._check_geo_rate_limit(request, "1.2.3.4", rc)
-        assert result is None
-
-    async def test_global_rate_limit_active_mode_exceeded(self) -> None:
-        middleware = _make_middleware(passive_mode=False)
-        middleware.rate_limit_handler = MagicMock()
-        middleware.rate_limit_handler.check_rate_limit = AsyncMock(
-            return_value=MockGuardResponse("Too many", 429)
-        )
-        check = RateLimitCheck(middleware)
-        request = MockGuardRequest()
-        result = await check._check_global_rate_limit(request, "1.2.3.4")
-        assert result is not None
-        assert result.status_code == 429
-
-
-class TestReferrerCheckPassiveMode:
-    async def test_referrer_not_allowed_passive_mode(self) -> None:
-        middleware = _make_middleware(passive_mode=True)
-        check = ReferrerCheck(middleware)
-        request = MockGuardRequest(headers={"referer": "https://evil.com/page"})
-        rc = RouteConfig()
-        rc.require_referrer = True
-        rc.allowed_referrers = ["trusted.com"]
-        request.state.route_config = rc
-        result = await check.check(request)
-        assert result is None
-
-
-class TestRequestSizeContentPassiveMode:
-    async def test_content_type_not_allowed_passive_mode(self) -> None:
-        middleware = _make_middleware(passive_mode=True)
-        check = RequestSizeContentCheck(middleware)
-        request = MockGuardRequest(
-            method="POST",
-            headers={"content-type": "text/xml"},
-        )
-        rc = RouteConfig()
-        rc.allowed_content_types = ["application/json"]
-        request.state.route_config = rc
-        result = await check._check_content_type_allowed(request, rc)
-        assert result is None
-
-
-class TestRequiredHeadersClassifyViolation:
-    def test_classify_other_header(self) -> None:
-        from guard_core.core.checks.implementations.required_headers import (
-            _classify_header_violation,
-        )
-
-        header_type, violation = _classify_header_violation("X-Custom-Header")
-        assert header_type == "advanced"
-        assert violation == "required_header"
+async def test_rate_limit_route_default_window() -> None:
+    mw = _make_middleware()
+    mw.rate_limit_handler.check_rate_limit = AsyncMock(return_value=None)
+    check = RateLimitCheck(mw)
+    rc = RouteConfig()
+    rc.rate_limit = 10
+    rc.rate_limit_window = None
+    req = _make_request_with_route_config(rc, path="/test")
+    req.state.is_whitelisted = False
+    req.state.client_ip = "1.2.3.4"
+    result = await check.check(req)
+    assert result is None

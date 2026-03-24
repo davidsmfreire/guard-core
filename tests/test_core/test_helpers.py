@@ -1,7 +1,9 @@
 from ipaddress import ip_address
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from guard_core.core.checks.helpers import (
+    _check_ip_blacklist,
+    _check_ip_whitelist,
     _get_detection_disabled_reason,
     _get_effective_penetration_setting,
     check_country_access,
@@ -15,179 +17,234 @@ from guard_core.core.checks.helpers import (
 )
 from guard_core.decorators.base import RouteConfig
 from guard_core.models import SecurityConfig
-from tests.conftest import MockGuardRequest
 
 
-def test_is_ip_in_blacklist_exact():
+async def test_is_ip_in_blacklist_exact_match() -> None:
     assert is_ip_in_blacklist("1.2.3.4", ip_address("1.2.3.4"), ["1.2.3.4"]) is True
-    assert is_ip_in_blacklist("1.2.3.5", ip_address("1.2.3.5"), ["1.2.3.4"]) is False
 
 
-def test_is_ip_in_blacklist_cidr():
+async def test_is_ip_in_blacklist_cidr_match() -> None:
     assert (
         is_ip_in_blacklist("10.0.0.5", ip_address("10.0.0.5"), ["10.0.0.0/8"]) is True
     )
-    assert (
-        is_ip_in_blacklist("11.0.0.1", ip_address("11.0.0.1"), ["10.0.0.0/8"]) is False
-    )
 
 
-def test_is_ip_in_whitelist_empty():
+async def test_is_ip_in_blacklist_no_match() -> None:
+    assert is_ip_in_blacklist("5.5.5.5", ip_address("5.5.5.5"), ["1.2.3.4"]) is False
+
+
+async def test_is_ip_in_whitelist_empty() -> None:
     assert is_ip_in_whitelist("1.2.3.4", ip_address("1.2.3.4"), []) is None
 
 
-def test_is_ip_in_whitelist_exact():
+async def test_is_ip_in_whitelist_exact_match() -> None:
     assert is_ip_in_whitelist("1.2.3.4", ip_address("1.2.3.4"), ["1.2.3.4"]) is True
-    assert is_ip_in_whitelist("1.2.3.5", ip_address("1.2.3.5"), ["1.2.3.4"]) is False
 
 
-def test_is_ip_in_whitelist_cidr():
+async def test_is_ip_in_whitelist_cidr_match() -> None:
     assert (
         is_ip_in_whitelist("10.0.0.5", ip_address("10.0.0.5"), ["10.0.0.0/8"]) is True
     )
 
 
-def test_check_country_access_no_handler():
+async def test_is_ip_in_whitelist_no_match() -> None:
+    assert is_ip_in_whitelist("5.5.5.5", ip_address("5.5.5.5"), ["1.2.3.4"]) is False
+
+
+async def test_check_country_access_no_handler() -> None:
     rc = RouteConfig()
-    rc.blocked_countries = ["US"]
     assert check_country_access("1.2.3.4", rc, None) is None
 
 
-def test_check_country_access_blocked():
-    rc = RouteConfig()
-    rc.blocked_countries = ["US"]
-    geo = MagicMock()
-    geo.get_country.return_value = "US"
-    assert check_country_access("1.2.3.4", rc, geo) is False
-
-
-def test_check_country_access_not_blocked():
+async def test_check_country_access_blocked() -> None:
     rc = RouteConfig()
     rc.blocked_countries = ["CN"]
     geo = MagicMock()
-    geo.get_country.return_value = "US"
+    geo.get_country = MagicMock(return_value="CN")
+    assert check_country_access("1.2.3.4", rc, geo) is False
+
+
+async def test_check_country_access_not_blocked() -> None:
+    rc = RouteConfig()
+    rc.blocked_countries = ["CN"]
+    geo = MagicMock()
+    geo.get_country = MagicMock(return_value="US")
     assert check_country_access("1.2.3.4", rc, geo) is None
 
 
-def test_check_country_access_whitelist():
+async def test_check_country_access_whitelisted() -> None:
     rc = RouteConfig()
     rc.whitelist_countries = ["US"]
     geo = MagicMock()
-    geo.get_country.return_value = "US"
+    geo.get_country = MagicMock(return_value="US")
     assert check_country_access("1.2.3.4", rc, geo) is True
 
 
-def test_check_country_access_whitelist_denied():
+async def test_check_country_access_not_whitelisted() -> None:
     rc = RouteConfig()
     rc.whitelist_countries = ["US"]
     geo = MagicMock()
-    geo.get_country.return_value = "CN"
+    geo.get_country = MagicMock(return_value="CN")
     assert check_country_access("1.2.3.4", rc, geo) is False
 
 
-def test_check_country_access_whitelist_no_country():
+async def test_check_country_access_whitelist_no_country() -> None:
     rc = RouteConfig()
     rc.whitelist_countries = ["US"]
     geo = MagicMock()
-    geo.get_country.return_value = None
+    geo.get_country = MagicMock(return_value=None)
     assert check_country_access("1.2.3.4", rc, geo) is False
 
 
-async def test_check_route_ip_access_blacklisted():
+async def test_check_country_access_blocked_and_whitelisted() -> None:
+    rc = RouteConfig()
+    rc.blocked_countries = ["CN"]
+    rc.whitelist_countries = ["US"]
+    geo = MagicMock()
+    geo.get_country = MagicMock(return_value="US")
+    assert check_country_access("1.2.3.4", rc, geo) is True
+
+
+async def test_check_ip_blacklist_empty() -> None:
+    rc = RouteConfig()
+    assert _check_ip_blacklist("1.2.3.4", ip_address("1.2.3.4"), rc) is False
+
+
+async def test_check_ip_blacklist_match() -> None:
     rc = RouteConfig()
     rc.ip_blacklist = ["1.2.3.4"]
-    middleware = MagicMock()
-    middleware.geo_ip_handler = None
-    result = await check_route_ip_access("1.2.3.4", rc, middleware)
-    assert result is False
+    assert _check_ip_blacklist("1.2.3.4", ip_address("1.2.3.4"), rc) is True
 
 
-async def test_check_route_ip_access_whitelisted():
+async def test_check_ip_whitelist_empty() -> None:
     rc = RouteConfig()
-    rc.ip_whitelist = ["1.2.3.4"]
-    middleware = MagicMock()
-    middleware.geo_ip_handler = None
-    result = await check_route_ip_access("1.2.3.4", rc, middleware)
-    assert result is True
-
-
-async def test_check_route_ip_access_invalid_ip():
-    rc = RouteConfig()
-    middleware = MagicMock()
-    result = await check_route_ip_access("invalid", rc, middleware)
-    assert result is False
-
-
-async def test_check_route_ip_access_no_rules():
-    rc = RouteConfig()
-    middleware = MagicMock()
-    middleware.geo_ip_handler = None
-    result = await check_route_ip_access("1.2.3.4", rc, middleware)
+    result = _check_ip_whitelist("1.2.3.4", ip_address("1.2.3.4"), rc)
     assert result is None
 
 
-async def test_check_user_agent_allowed_route_blocked():
-    config = MagicMock()
-    config.blocked_user_agents = []
+async def test_check_route_ip_access_blacklisted() -> None:
     rc = RouteConfig()
-    rc.blocked_user_agents = ["BadBot"]
-    with patch(
-        "guard_core.utils.is_user_agent_allowed",
-        new_callable=AsyncMock,
-        return_value=True,
-    ):
-        result = await check_user_agent_allowed("BadBot/1.0", rc, config)
+    rc.ip_blacklist = ["1.2.3.4"]
+    mw = MagicMock()
+    mw.geo_ip_handler = None
+    result = await check_route_ip_access("1.2.3.4", rc, mw)
     assert result is False
 
 
-async def test_check_user_agent_allowed_global():
-    config = MagicMock()
-    with patch(
-        "guard_core.utils.is_user_agent_allowed",
-        new_callable=AsyncMock,
-        return_value=True,
-    ):
-        result = await check_user_agent_allowed("Mozilla/5.0", None, config)
+async def test_check_route_ip_access_whitelisted() -> None:
+    rc = RouteConfig()
+    rc.ip_whitelist = ["1.2.3.4"]
+    mw = MagicMock()
+    mw.geo_ip_handler = None
+    result = await check_route_ip_access("1.2.3.4", rc, mw)
     assert result is True
 
 
-def test_validate_auth_header_bearer():
-    ok, msg = validate_auth_header("Bearer token123", "bearer")
-    assert ok is True
-
-    ok, msg = validate_auth_header("Basic abc", "bearer")
-    assert ok is False
-
-
-def test_validate_auth_header_basic():
-    ok, msg = validate_auth_header("Basic abc", "basic")
-    assert ok is True
-
-    ok, msg = validate_auth_header("Bearer abc", "basic")
-    assert ok is False
+async def test_check_route_ip_access_invalid_ip() -> None:
+    rc = RouteConfig()
+    mw = MagicMock()
+    result = await check_route_ip_access("not_an_ip", rc, mw)
+    assert result is False
 
 
-def test_validate_auth_header_custom():
-    ok, msg = validate_auth_header("", "custom")
-    assert ok is False
+async def test_check_route_ip_access_no_restrictions() -> None:
+    rc = RouteConfig()
+    mw = MagicMock()
+    mw.geo_ip_handler = None
+    result = await check_route_ip_access("1.2.3.4", rc, mw)
+    assert result is None
 
-    ok, msg = validate_auth_header("CustomVal", "custom")
-    assert ok is True
+
+async def test_check_route_ip_access_country() -> None:
+    rc = RouteConfig()
+    rc.blocked_countries = ["CN"]
+    mw = MagicMock()
+    mw.geo_ip_handler = MagicMock()
+    mw.geo_ip_handler.get_country = MagicMock(return_value="CN")
+    result = await check_route_ip_access("1.2.3.4", rc, mw)
+    assert result is False
 
 
-def test_is_referrer_domain_allowed():
+async def test_check_user_agent_blocked_by_route() -> None:
+    rc = RouteConfig()
+    rc.blocked_user_agents = ["badbot"]
+    config = MagicMock()
+    result = await check_user_agent_allowed("badbot/1.0", rc, config)
+    assert result is False
+
+
+async def test_check_user_agent_allowed_by_route() -> None:
+    rc = RouteConfig()
+    rc.blocked_user_agents = ["badbot"]
+    config = SecurityConfig(enable_redis=False)
+    result = await check_user_agent_allowed("Mozilla/5.0", rc, config)
+    assert result is True
+
+
+async def test_validate_auth_bearer_valid() -> None:
+    valid, msg = validate_auth_header("Bearer token123", "bearer")
+    assert valid is True
+    assert msg == ""
+
+
+async def test_validate_auth_bearer_invalid() -> None:
+    valid, msg = validate_auth_header("Basic creds", "bearer")
+    assert valid is False
+    assert "Bearer" in msg
+
+
+async def test_validate_auth_basic_valid() -> None:
+    valid, msg = validate_auth_header("Basic dXNlcjpwYXNz", "basic")
+    assert valid is True
+
+
+async def test_validate_auth_basic_invalid() -> None:
+    valid, msg = validate_auth_header("Bearer token", "basic")
+    assert valid is False
+    assert "Basic" in msg
+
+
+async def test_validate_auth_custom_valid() -> None:
+    valid, msg = validate_auth_header("CustomScheme value", "custom")
+    assert valid is True
+
+
+async def test_validate_auth_custom_empty() -> None:
+    valid, msg = validate_auth_header("", "custom")
+    assert valid is False
+    assert "custom" in msg
+
+
+async def test_referrer_domain_valid() -> None:
     assert (
         is_referrer_domain_allowed("https://example.com/page", ["example.com"]) is True
     )
+
+
+async def test_referrer_domain_subdomain() -> None:
     assert (
-        is_referrer_domain_allowed("https://sub.example.com/page", ["example.com"])
-        is True
+        is_referrer_domain_allowed("https://sub.example.com/", ["example.com"]) is True
     )
-    assert is_referrer_domain_allowed("https://evil.com/page", ["example.com"]) is False
-    assert is_referrer_domain_allowed("", ["example.com"]) is False
 
 
-def test_get_effective_penetration_setting():
+async def test_referrer_domain_invalid() -> None:
+    assert is_referrer_domain_allowed("https://evil.com/", ["example.com"]) is False
+
+
+async def test_referrer_domain_bad_url() -> None:
+    assert (
+        is_referrer_domain_allowed("not a url at all \\x00", ["example.com"]) is False
+    )
+
+
+async def test_get_effective_penetration_setting_default() -> None:
+    config = SecurityConfig(enable_redis=False, enable_penetration_detection=True)
+    enabled, route_specific = _get_effective_penetration_setting(config, None)
+    assert enabled is True
+    assert route_specific is None
+
+
+async def test_get_effective_penetration_setting_route_override() -> None:
     config = SecurityConfig(enable_redis=False, enable_penetration_detection=True)
     rc = RouteConfig()
     rc.enable_suspicious_detection = False
@@ -196,74 +253,52 @@ def test_get_effective_penetration_setting():
     assert route_specific is False
 
 
-def test_get_detection_disabled_reason():
+async def test_get_detection_disabled_reason_route_override() -> None:
     config = SecurityConfig(enable_redis=False, enable_penetration_detection=True)
     reason = _get_detection_disabled_reason(config, False)
     assert reason == "disabled_by_decorator"
 
+
+async def test_get_detection_disabled_reason_not_enabled() -> None:
+    config = SecurityConfig(enable_redis=False, enable_penetration_detection=False)
     reason = _get_detection_disabled_reason(config, None)
     assert reason == "not_enabled"
 
 
-async def test_detect_penetration_patterns_enabled():
-    request = MockGuardRequest(query_params={"q": "normal"})
+async def test_detect_penetration_patterns_enabled() -> None:
+    from unittest.mock import patch
+
     config = SecurityConfig(enable_redis=False, enable_penetration_detection=True)
-    rc = RouteConfig()
-    rc.enable_suspicious_detection = True
+    from tests.conftest import MockGuardRequest
 
-    def should_bypass(check_name, route_config):
-        return False
-
+    req = MockGuardRequest(path="/test")
     with patch(
         "guard_core.core.checks.helpers.detect_penetration_attempt",
         new_callable=AsyncMock,
         return_value=(False, ""),
     ):
-        result, trigger = await detect_penetration_patterns(
-            request, rc, config, should_bypass
+        result, info = await detect_penetration_patterns(
+            req, None, config, lambda *a: False
         )
     assert result is False
 
 
-async def test_detect_penetration_patterns_disabled():
-    request = MockGuardRequest()
+async def test_detect_penetration_patterns_disabled() -> None:
     config = SecurityConfig(enable_redis=False, enable_penetration_detection=False)
+    from tests.conftest import MockGuardRequest
 
-    def should_bypass(check_name, route_config):
-        return False
-
-    result, trigger = await detect_penetration_patterns(
-        request, None, config, should_bypass
+    req = MockGuardRequest(path="/test")
+    result, info = await detect_penetration_patterns(
+        req, None, config, lambda *a: False
     )
     assert result is False
-    assert trigger == "not_enabled"
+    assert info == "not_enabled"
 
 
-async def test_detect_penetration_patterns_bypassed():
-    request = MockGuardRequest()
+async def test_detect_penetration_patterns_bypassed() -> None:
     config = SecurityConfig(enable_redis=False, enable_penetration_detection=True)
-    rc = RouteConfig()
+    from tests.conftest import MockGuardRequest
 
-    def should_bypass(check_name, route_config):
-        return True
-
-    result, trigger = await detect_penetration_patterns(
-        request, rc, config, should_bypass
-    )
-    assert result is False
-
-
-async def test_check_route_ip_access_country_blocked():
-    rc = RouteConfig()
-    rc.blocked_countries = ["CN"]
-    middleware = MagicMock()
-    geo = MagicMock()
-    geo.get_country.return_value = "CN"
-    middleware.geo_ip_handler = geo
-    result = await check_route_ip_access("1.2.3.4", rc, middleware)
-    assert result is False
-
-
-def test_is_referrer_domain_allowed_exception():
-    result = is_referrer_domain_allowed(None, ["example.com"])
+    req = MockGuardRequest(path="/test")
+    result, info = await detect_penetration_patterns(req, None, config, lambda *a: True)
     assert result is False

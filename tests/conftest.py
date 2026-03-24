@@ -1,21 +1,34 @@
-import pytest
+import os
+from collections.abc import AsyncGenerator
+from pathlib import Path
+from typing import Any
 
+import pytest
+from pytest import TempPathFactory
+
+from guard_core.handlers.cloud_handler import cloud_handler
 from guard_core.handlers.ipban_handler import IPBanManager
-from guard_core.handlers.security_headers_handler import SecurityHeadersManager
-from guard_core.handlers.suspatterns_handler import SusPatternsManager
+from guard_core.handlers.ipinfo_handler import IPInfoManager
+from guard_core.handlers.ratelimit_handler import rate_limit_handler
+from guard_core.handlers.redis_handler import RedisManager
+from guard_core.handlers.suspatterns_handler import sus_patterns_handler
 from guard_core.models import SecurityConfig
+
+IPINFO_TOKEN = str(os.getenv("IPINFO_TOKEN"))
+REDIS_URL = str(os.getenv("REDIS_URL"))
+REDIS_PREFIX = str(os.getenv("REDIS_PREFIX"))
 
 
 class MockState:
     def __init__(self) -> None:
-        self._attrs: dict = {}
+        self._attrs: dict[str, Any] = {}
 
-    def __getattr__(self, name: str) -> object:
+    def __getattr__(self, name: str) -> Any:
         if name == "_attrs":
             return super().__getattribute__(name)
         return self._attrs.get(name)
 
-    def __setattr__(self, name: str, value: object) -> None:
+    def __setattr__(self, name: str, value: Any) -> None:
         if name == "_attrs":
             super().__setattr__(name, value)
         else:
@@ -27,12 +40,12 @@ class MockGuardRequest:
         self,
         path: str = "/",
         method: str = "GET",
-        headers: dict | None = None,
+        headers: dict[str, str] | None = None,
         client_host: str | None = "127.0.0.1",
         scheme: str = "https",
-        query_params: dict | None = None,
+        query_params: dict[str, str] | None = None,
         body_content: bytes = b"",
-        scope: dict | None = None,
+        scope: dict[str, Any] | None = None,
     ) -> None:
         self._path = path
         self._method = method
@@ -68,11 +81,11 @@ class MockGuardRequest:
         return self._client_host
 
     @property
-    def headers(self) -> dict:
+    def headers(self) -> dict[str, str]:
         return self._headers
 
     @property
-    def query_params(self) -> dict:
+    def query_params(self) -> dict[str, str]:
         return self._query_params
 
     async def body(self) -> bytes:
@@ -83,7 +96,7 @@ class MockGuardRequest:
         return self._state
 
     @property
-    def scope(self) -> dict:
+    def scope(self) -> dict[str, Any]:
         return self._scope
 
 
@@ -92,10 +105,10 @@ class MockGuardResponse:
         self,
         content: str = "",
         status_code: int = 200,
-        headers: dict | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self._status_code = status_code
-        self._headers = headers or {}
+        self._headers: dict[str, str] = headers or {}
         self._body = content.encode() if isinstance(content, str) else content
 
     @property
@@ -103,7 +116,7 @@ class MockGuardResponse:
         return self._status_code
 
     @property
-    def headers(self) -> dict:
+    def headers(self) -> dict[str, str]:
         return self._headers
 
     @property
@@ -119,48 +132,113 @@ class MockGuardResponseFactory:
         return MockGuardResponse(f"Redirect to {url}", status_code, {"Location": url})
 
 
-@pytest.fixture
-def mock_request() -> MockGuardRequest:
-    return MockGuardRequest()
-
-
-@pytest.fixture
-def mock_response() -> MockGuardResponse:
-    return MockGuardResponse()
-
-
-@pytest.fixture
-def mock_response_factory() -> MockGuardResponseFactory:
-    return MockGuardResponseFactory()
-
-
-@pytest.fixture
-def security_config() -> SecurityConfig:
-    return SecurityConfig(enable_redis=False)
-
-
 @pytest.fixture(autouse=True)
-def cleanup_ipban_singleton() -> None:
+async def reset_state() -> AsyncGenerator[None, None]:
     IPBanManager._instance = None
-    yield  # type: ignore
+
+    original_patterns = sus_patterns_handler.patterns.copy()
+
+    cloud_instance = cloud_handler._instance
+    if cloud_instance:
+        cloud_instance.ip_ranges = {"AWS": set(), "GCP": set(), "Azure": set()}
+        cloud_instance.redis_handler = None
+        cloud_instance.agent_handler = None
+
+    if IPInfoManager._instance:
+        if IPInfoManager._instance.reader:
+            IPInfoManager._instance.reader.close()
+        IPInfoManager._instance.agent_handler = None
+        IPInfoManager._instance = None
+
+    yield
+    sus_patterns_handler.patterns = original_patterns.copy()
+
     if IPBanManager._instance:
         IPBanManager._instance.agent_handler = None
     IPBanManager._instance = None
 
 
-@pytest.fixture(autouse=True)
-def cleanup_suspatterns_singleton() -> None:
-    SusPatternsManager._instance = None
-    yield  # type: ignore
-    if SusPatternsManager._instance:
-        SusPatternsManager._instance.agent_handler = None
-        if hasattr(SusPatternsManager._instance, "_performance_monitor"):
-            SusPatternsManager._instance._performance_monitor = None
-    SusPatternsManager._instance = None
+@pytest.fixture
+def security_config() -> SecurityConfig:
+    return SecurityConfig(
+        enable_redis=False,
+        whitelist=["127.0.0.1"],
+        blacklist=["192.168.1.1"],
+        blocked_user_agents=[r"badbot"],
+        auto_ban_threshold=3,
+        auto_ban_duration=300,
+        custom_log_file="test_log.log",
+        custom_error_responses={
+            403: "Custom Forbidden",
+            429: "Custom Too Many Requests",
+        },
+        enable_cors=True,
+        cors_allow_origins=["https://example.com"],
+        cors_allow_methods=["GET", "POST"],
+        cors_allow_headers=["*"],
+        cors_allow_credentials=True,
+        cors_expose_headers=["X-Custom-Header"],
+        cors_max_age=600,
+    )
+
+
+@pytest.fixture(scope="session")
+def ipinfo_db_path(tmp_path_factory: TempPathFactory) -> Path:
+    return tmp_path_factory.mktemp("ipinfo_data") / "country_asn.mmdb"
+
+
+@pytest.fixture
+def security_config_redis(ipinfo_db_path: Path) -> SecurityConfig:
+    return SecurityConfig(
+        redis_url=REDIS_URL,
+        redis_prefix=REDIS_PREFIX,
+        whitelist=["127.0.0.1"],
+        blacklist=["192.168.1.1"],
+        blocked_user_agents=[r"badbot"],
+        auto_ban_threshold=3,
+        auto_ban_duration=300,
+        custom_log_file="test_log.log",
+        custom_error_responses={
+            403: "Custom Forbidden",
+            429: "Custom Too Many Requests",
+        },
+        enable_cors=True,
+        cors_allow_origins=["https://example.com"],
+        cors_allow_methods=["GET", "POST"],
+        cors_allow_headers=["*"],
+        cors_allow_credentials=True,
+        cors_expose_headers=["X-Custom-Header"],
+        cors_max_age=600,
+    )
 
 
 @pytest.fixture(autouse=True)
-def reset_headers_manager() -> None:
-    SecurityHeadersManager._instance = None
+async def redis_cleanup() -> AsyncGenerator[None, None]:
+    config = SecurityConfig(
+        redis_url=REDIS_URL,
+        redis_prefix=REDIS_PREFIX,
+    )
+    redis_handler = RedisManager(config)
+    await redis_handler.initialize()
+    try:
+        await redis_handler.delete_pattern(f"{REDIS_PREFIX}*")
+    except Exception:
+        pass
+    finally:
+        await redis_handler.close()
     yield  # type: ignore
-    SecurityHeadersManager._instance = None
+
+
+@pytest.fixture(autouse=True)
+async def reset_rate_limiter() -> AsyncGenerator[None, None]:
+    config = SecurityConfig(enable_redis=False)
+    rate_limit = rate_limit_handler(config)
+    await rate_limit.reset()
+    yield  # type: ignore
+
+
+@pytest.fixture
+def clean_rate_limiter() -> None:
+    from guard_core.handlers.ratelimit_handler import RateLimitManager
+
+    RateLimitManager._instance = None
