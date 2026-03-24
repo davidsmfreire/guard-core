@@ -143,6 +143,8 @@ def security_config() -> SecurityConfig:
 def cleanup_ipban_singleton() -> None:
     IPBanManager._instance = None
     yield  # type: ignore
+    if IPBanManager._instance:
+        IPBanManager._instance.agent_handler = None
     IPBanManager._instance = None
 
 
@@ -150,6 +152,10 @@ def cleanup_ipban_singleton() -> None:
 def cleanup_suspatterns_singleton() -> None:
     SusPatternsManager._instance = None
     yield  # type: ignore
+    if SusPatternsManager._instance:
+        SusPatternsManager._instance.agent_handler = None
+        if hasattr(SusPatternsManager._instance, "_performance_monitor"):
+            SusPatternsManager._instance._performance_monitor = None
     SusPatternsManager._instance = None
 
 

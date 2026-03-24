@@ -159,17 +159,16 @@ class IPInfoManager:
             if self.agent_handler:
                 import asyncio
 
+                coro = self._send_geo_event(
+                    event_type="geo_lookup_failed",
+                    ip_address=ip,
+                    action_taken="lookup_failed",
+                    reason=f"Geographic lookup failed: {str(e)}",
+                )
                 try:
-                    asyncio.create_task(
-                        self._send_geo_event(
-                            event_type="geo_lookup_failed",
-                            ip_address=ip,
-                            action_taken="lookup_failed",
-                            reason=f"Geographic lookup failed: {str(e)}",
-                        )
-                    )
+                    asyncio.create_task(coro)
                 except Exception:
-                    pass
+                    coro.close()
             return None
 
     async def check_country_access(

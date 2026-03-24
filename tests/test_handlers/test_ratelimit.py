@@ -45,13 +45,19 @@ def test_initialization(
 
 @pytest.mark.asyncio
 async def test_initialize_redis(rate_limiter: RateLimitManager) -> None:
+    from contextlib import asynccontextmanager
+
+    class FakeConn:
+        async def script_load(self, script: str) -> str:
+            return "sha123"
+
     mock_redis = MagicMock()
-    mock_conn = AsyncMock()
-    mock_redis.get_connection.return_value.__aenter__ = AsyncMock(
-        return_value=mock_conn
-    )
-    mock_redis.get_connection.return_value.__aexit__ = AsyncMock(return_value=None)
-    mock_conn.script_load = AsyncMock(return_value="sha123")
+
+    @asynccontextmanager
+    async def fake_connection():
+        yield FakeConn()
+
+    mock_redis.get_connection = fake_connection
     rate_limiter.config.enable_redis = True
 
     await rate_limiter.initialize_redis(mock_redis)

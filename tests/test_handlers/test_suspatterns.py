@@ -639,6 +639,8 @@ async def test_add_pattern_clears_compiler_cache(handler: SusPatternsManager) ->
 async def test_remove_pattern_clears_caches(handler: SusPatternsManager) -> None:
     from unittest.mock import AsyncMock
 
+    original_compiler = handler._compiler
+    original_monitor = handler._performance_monitor
     handler._compiler = AsyncMock()
     handler._compiler.clear_cache = AsyncMock()
     handler._performance_monitor = AsyncMock()
@@ -649,6 +651,9 @@ async def test_remove_pattern_clears_caches(handler: SusPatternsManager) -> None
 
     handler._compiler.clear_cache.assert_called()
     handler._performance_monitor.remove_pattern_stats.assert_called()
+
+    handler._compiler = original_compiler
+    handler._performance_monitor = original_monitor
 
 
 @pytest.mark.asyncio

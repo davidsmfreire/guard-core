@@ -13,8 +13,10 @@ from guard_core.handlers.ipinfo_handler import IPInfoManager
 def reset_ipinfo_singleton() -> Generator:
     IPInfoManager._instance = None
     yield
-    if IPInfoManager._instance and IPInfoManager._instance.reader:
-        IPInfoManager._instance.reader.close()
+    if IPInfoManager._instance:
+        IPInfoManager._instance.agent_handler = None
+        if IPInfoManager._instance.reader:
+            IPInfoManager._instance.reader.close()
     IPInfoManager._instance = None
 
 
@@ -261,12 +263,16 @@ async def test_initialize_agent(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_get_country_exception_with_agent(tmp_path: Path) -> None:
+    import asyncio
+
     db = IPInfoManager(token="test", db_path=tmp_path / "test.mmdb")
     db.reader = Mock()
     db.reader.get.side_effect = Exception("DB error")
     db.agent_handler = AsyncMock()
     result = db.get_country("1.1.1.1")
     assert result is None
+    await asyncio.sleep(0)
+    db.agent_handler = None
 
 
 @pytest.mark.asyncio
@@ -424,6 +430,8 @@ async def test_get_country_exception_with_agent_task_failure(
     db.reader.get.side_effect = Exception("DB error")
     db.agent_handler = AsyncMock()
 
-    with patch("asyncio.create_task", side_effect=RuntimeError("no loop")):
-        result = db.get_country("1.1.1.1")
+    with patch.object(db, "_send_geo_event", return_value=None):
+        with patch("asyncio.create_task", side_effect=RuntimeError("no loop")):
+            result = db.get_country("1.1.1.1")
     assert result is None
+    db.agent_handler = None
