@@ -60,7 +60,7 @@ async def log_activity(
 
 Parameters:
 
-- `request`: The FastAPI request object
+- `request`: The request object implementing `GuardRequest`
 - `logger`: The logger instance
 - `log_type`: Type of log entry (default: "request", can also be "suspicious")
 - `reason`: Reason for flagging an activity
@@ -81,7 +81,7 @@ is_user_agent_allowed
 ```python
 async def is_user_agent_allowed(
     user_agent: str,
-    config: SecurityConfig
+    config: Any
 ) -> bool:
     """
     Check if user agent is allowed.
@@ -93,9 +93,9 @@ check_ip_country
 
 ```python
 async def check_ip_country(
-    request: str | Request,
-    config: SecurityConfig,
-    ipinfo_db: IPInfoManager
+    request: str | GuardRequest,
+    config: Any,
+    geo_ip_handler: GeoIPHandler
 ) -> bool:
     """
     Check if IP is from a blocked country.
@@ -108,20 +108,20 @@ is_ip_allowed
 ```python
 async def is_ip_allowed(
     ip: str,
-    config: SecurityConfig,
-    ipinfo_db: IPInfoManager | None = None
+    config: Any,
+    geo_ip_handler: GeoIPHandler | None = None
 ) -> bool:
     """
     Check if IP address is allowed.
     """
 ```
 
-The `ipinfo_db` parameter is now properly optional - it's only needed when country filtering is configured. If it's not provided when country filtering is configured, the function will work correctly but won't apply country filtering rules rules.
+The `geo_ip_handler` parameter is now properly optional - it's only needed when country filtering is configured. If it's not provided when country filtering is configured, the function will work correctly but won't apply country filtering rules.
 
 This function intelligently handles:
 
 - Whitelist/blacklist checking
-- Country filtering (only when IPInfoManager is provided)
+- Country filtering (only when GeoIPHandler is provided)
 - Cloud provider detection (only when cloud blocking is configured)
 
 This selective processing aligns with Guard Core's smart resource loading to optimize performance.
@@ -141,7 +141,7 @@ This function analyzes various parts of the request (query params, body, path, h
 
 Parameters:
 
-- `request`: The FastAPI request object to analyze
+- `request`: The request object implementing `GuardRequest`
 
 Returns a tuple where:
 

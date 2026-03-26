@@ -42,9 +42,9 @@ ___
 Environment
 -----------
 
-- Guard Core version: [e.g. 4.0.2]
+- Guard Core version: [e.g. 1.0.0]
 - Python version: [e.g. 3.11.10]
-- FastAPI version: [e.g. 0.115.0]
+- Framework and version: [e.g. FastAPI 0.115.0, Flask 3.1.0, Django 5.1]
 - OS: [e.g. Ubuntu 22.04, Windows 11, MacOS 15.4]
 - Other relevant dependencies:
 
@@ -54,16 +54,10 @@ Configuration
 -------------
 
 ```python
-from fastapi import FastAPI
-from guard_core.middleware import SecurityMiddleware
 from guard_core.models import SecurityConfig
 
-app = FastAPI()
-
-security_config = SecurityConfig(
+config = SecurityConfig(
 )
-
-app.add_middleware(SecurityMiddleware, config=security_config)
 ```
 
 ___

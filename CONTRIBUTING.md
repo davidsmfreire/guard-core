@@ -22,7 +22,7 @@ Before creating bug reports, please check the issue tracker to avoid duplicates.
 - Provide specific examples (e.g., HTTP requests that trigger the issue)
 - Describe the behavior you observed and why it's problematic
 - Include logs, error messages, and Python version
-- Specify your environment: OS, Python version, FastAPI version, etc.
+- Specify your environment: OS, Python version, framework and version, etc.
 
 ### Suggesting Enhancements
 
@@ -41,7 +41,7 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 - Include tests for new features or bug fixes
 - Update documentation for significant changes
 - Ensure the test suite passes
-- Make sure your code lints (mypy, flake8, black)
+- Make sure your code lints (Mypy, Ruff)
 
 ### Development Setup
 

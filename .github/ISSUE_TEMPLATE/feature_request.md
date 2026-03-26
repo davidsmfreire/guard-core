@@ -34,17 +34,11 @@ Example Implementation
 If possible, provide a pseudocode example of how this feature might be implemented or used:
 
 ```python
-from fastapi import FastAPI
-from guard_core.middleware import SecurityMiddleware
 from guard_core.models import SecurityConfig
 
-app = FastAPI()
-
-security_config = SecurityConfig(
+config = SecurityConfig(
     new_feature=SomeConfiguration(...)
 )
-
-app.add_middleware(SecurityMiddleware, config=security_config)
 ```
 
 ___

@@ -8,8 +8,8 @@ We currently provide security updates for the following versions of Guard Core:
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.0.x   | :white_check_mark: |
-| < 1.0   | :x:                |
+| 1.0.x   | Supported          |
+| < 1.0   | Not supported      |
 
 Reporting a Vulnerability
 -------------------------
@@ -77,7 +77,7 @@ If using Redis for distributed state management:
 Security Features
 -----------------
 
-Guard Core provides several security features to protect your FastAPI applications:
+Guard Core provides several security features to protect your applications:
 
 - IP Whitelisting and Blacklisting
 - User Agent Filtering
