@@ -10,6 +10,21 @@ Release Notes
 
 ___
 
+v1.0.1 (2026-03-28)
+-------------------
+
+### Fixed
+
+- Removed false-positive suspicious patterns that blocked legitimate web traffic:
+  - Static file extensions (`.html`, `.js`, `.css`, `.png`, `.jpg`, `.svg`, `.webp`, `.bmp`, `.pl`, `.properties`)
+  - Common API prefixes (`/api/`, `/rest/`, `/v1/`, `/v2/`, `/status/`, `/config/`)
+  - Authentication paths (`/login`, `/signin`, `/account/login`)
+  - Admin paths (`/admin`)
+  - Static asset directories (`/images/`, `/css/`, `/img/`, `/scripts/`)
+- Retained detection for actual recon indicators: legacy server extensions (`.asp`, `.aspx`, `.jsp`, `.cfm`, `.cgi`, etc.), and suspicious management endpoints (`/management`, `/config_dump`, `/credentials`)
+
+___
+
 v1.0.0 (2026-03-25)
 --------------------
 
