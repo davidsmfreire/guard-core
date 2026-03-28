@@ -183,18 +183,13 @@ class SusPatternsManager:
         ),
         (
             r"(?:^|/)[\w./-]*\.(?:asp|aspx|jsp|jsa|jhtml|shtml|cfm|cgi|do|action"
-            r"|lua|inc|woa|nsf|esp|html?|js|css|properties|png|gif|jpg|jpeg"
-            r"|svg|webp|bmp|pl)(?:\?|$)",
+            r"|lua|inc|woa|nsf|esp)(?:\?|$)",
             _CTX_RECON,
         ),
         (
-            r"^/(?:api|rest|v\d+|management|system|version|status|config"
-            r"|config_dump|credentials)(?:/|$|\?)",
+            r"^/(?:management|system|version|config_dump|credentials)(?:/|$|\?)",
             _CTX_RECON,
         ),
-        (r"^/admin(?:istrator)?(?:[./?\-]|$)", _CTX_RECON),
-        (r"^/(?:login|logon|signin)(?:[./?\-]|$|/)", _CTX_RECON),
-        (r"(?:^|/)account/login(?:\?|$|/)", _CTX_RECON),
         (r"(?:^|/)(?:actuator|server-status|telescope)(?:/|$|\?)", _CTX_RECON),
         (
             r"(?:CSCOE|dana-(?:na|cached)|sslvpn|RDWeb|/owa/|/ecp/"
@@ -210,7 +205,7 @@ class SusPatternsManager:
         ),
         (r"(?:^|/)cgi-(?:bin|mod)/", _CTX_RECON),
         (r"(?:^|/)(?:HNAP1|IPCamDesc\.xml|SDK/webLanguage)(?:\?|$|/)", _CTX_RECON),
-        (r"^/(?:scripts|language|languages|images|css|img)/", _CTX_RECON),
+        (r"^/(?:language|languages)/", _CTX_RECON),
         (
             r"(?:^|/)(?:robots\.txt|sitemap\.xml|security\.txt|readme\.txt"
             r"|README\.md|CHANGELOG|pom\.xml|build\.gradle|appsettings\.json"

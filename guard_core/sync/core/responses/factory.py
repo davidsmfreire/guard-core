@@ -18,7 +18,7 @@ class ErrorResponseFactory:
         custom_message = self.context.config.custom_error_responses.get(
             status_code, default_message
         )
-        response = self.context.response_factory.create_response(
+        response: GuardResponse = self.context.response_factory.create_response(
             custom_message, status_code
         )
 
