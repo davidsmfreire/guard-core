@@ -10,6 +10,15 @@ Release Notes
 
 ___
 
+v1.0.3 (2026-04-05)
+-------------------
+
+### Added
+
+- Guard processing time instrumentation on all request-scoped `SecurityEvent` objects via `get_pipeline_response_time()`. Covers events from `SecurityEventBus`, `SecurityCheckPipeline`, `RateLimitManager`, `BaseSecurityDecorator`, and `send_agent_event()`. Timing starts at pipeline entry and lazily initializes for events fired before or after the pipeline (bypass, behavioral). No adapter-level changes required
+
+___
+
 v1.0.2 (2026-04-05)
 -------------------
 
@@ -20,7 +29,7 @@ v1.0.2 (2026-04-05)
 
 ### Added
 
-- Pipeline response time instrumentation: `SecurityCheckPipeline` now measures guard processing latency via `time.monotonic()` and attaches it as `response_time` on `SecurityEvent` objects, with no adapter-level changes required
+- Guard processing time instrumentation on all request-scoped `SecurityEvent` objects via `get_pipeline_response_time()`. Covers events from `SecurityEventBus`, `SecurityCheckPipeline`, `RateLimitManager`, `BaseSecurityDecorator`, and `send_agent_event()`. Timing starts at pipeline entry and lazily initializes for events fired before or after the pipeline (bypass, behavioral). No adapter-level changes required
 
 ___
 

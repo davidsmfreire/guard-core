@@ -90,7 +90,10 @@ class BaseSecurityDecorator:
             return
 
         try:
-            from guard_core.utils import extract_client_ip
+            from guard_core.utils import (
+                extract_client_ip,
+                get_pipeline_response_time,
+            )
 
             client_ip = await extract_client_ip(
                 request, self.config, self.agent_handler
@@ -108,6 +111,7 @@ class BaseSecurityDecorator:
                 reason=reason,
                 endpoint=str(request.url_path),
                 method=request.method,
+                response_time=get_pipeline_response_time(request),
                 decorator_type=decorator_type,
                 metadata=kwargs,
             )

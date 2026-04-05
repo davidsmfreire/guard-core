@@ -1,12 +1,11 @@
 import logging
-import time
 from datetime import datetime, timezone
 from typing import Any
 
 from guard_core.models import SecurityConfig
 from guard_core.sync.decorators.base import RouteConfig
 from guard_core.sync.protocols.request_protocol import SyncGuardRequest
-from guard_core.sync.utils import extract_client_ip
+from guard_core.sync.utils import extract_client_ip, get_pipeline_response_time
 
 
 class SecurityEventBus:
@@ -42,13 +41,6 @@ class SecurityEventBus:
                 except Exception:
                     pass
 
-            pipeline_start = getattr(request.state, "_guard_pipeline_start", None)
-            response_time = (
-                (time.monotonic() - pipeline_start)
-                if isinstance(pipeline_start, (int, float))
-                else None
-            )
-
             from guard_agent import SecurityEvent
 
             event = SecurityEvent(
@@ -61,7 +53,7 @@ class SecurityEventBus:
                 reason=reason,
                 endpoint=str(request.url_path),
                 method=request.method,
-                response_time=response_time,
+                response_time=get_pipeline_response_time(request),
                 metadata=kwargs,
             )
 

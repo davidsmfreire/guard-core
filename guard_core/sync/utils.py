@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from ipaddress import ip_address, ip_network
 from typing import Any, Literal
@@ -18,6 +19,16 @@ def _sanitize_for_log(value: str) -> str:
         for char in sanitized
     )
     return sanitized
+
+
+def get_pipeline_response_time(request: SyncGuardRequest | None) -> float | None:
+    if request is None:
+        return None
+    pipeline_start = getattr(request.state, "_guard_pipeline_start", None)
+    if not isinstance(pipeline_start, (int, float)):
+        pipeline_start = time.monotonic()
+        request.state._guard_pipeline_start = pipeline_start
+    return time.monotonic() - pipeline_start
 
 
 def send_agent_event(
@@ -55,6 +66,7 @@ def send_agent_event(
             reason=reason,
             endpoint=endpoint,
             method=method,
+            response_time=get_pipeline_response_time(request),
             **kwargs,
         )
 

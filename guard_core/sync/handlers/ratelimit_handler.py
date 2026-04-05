@@ -224,6 +224,8 @@ class RateLimitManager:
 
             from guard_agent import SecurityEvent
 
+            from guard_core.sync.utils import get_pipeline_response_time
+
             event = SecurityEvent(
                 timestamp=datetime.now(timezone.utc),
                 event_type="rate_limited",
@@ -232,6 +234,7 @@ class RateLimitManager:
                 reason=f"{message}: {details}",
                 endpoint=str(request.url_path),
                 method=request.method,
+                response_time=get_pipeline_response_time(request),
                 metadata={
                     "request_count": request_count,
                     "rate_limit": self.config.rate_limit,
