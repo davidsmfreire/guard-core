@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 
 ___
 
+v1.0.2 (2026-04-05)
+-------------------
+
+### Fixed
+
+- Removed `_check_ip_spoofing()` which incorrectly flagged every request with `X-Forwarded-For` headers as a spoofing attempt when `trusted_proxies` was not configured (the default)
+- Added IP caching in `extract_client_ip` to avoid redundant lookups across the request lifecycle
+
+### Added
+
+- Pipeline response time instrumentation: `SecurityCheckPipeline` now measures guard processing latency via `time.monotonic()` and attaches it as `response_time` on `SecurityEvent` objects, with no adapter-level changes required
+
+___
+
 v1.0.1 (2026-03-28)
 -------------------
 
