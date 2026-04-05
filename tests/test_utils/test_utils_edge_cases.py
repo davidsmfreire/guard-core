@@ -35,9 +35,19 @@ def test_extract_with_valid_header() -> None:
     assert result == "1.2.3.4"
 
 
+async def test_extract_client_ip_returns_cached_ip() -> None:
+    request = Mock()
+    request.state.client_ip = "10.0.0.1"
+
+    config = SecurityConfig()
+    result = await extract_client_ip(request, config, None)
+    assert result == "10.0.0.1"
+
+
 async def test_extract_client_ip_with_invalid_forwarded_for() -> None:
     request = Mock()
     request.client_host = "192.168.1.1"
+    request.state.client_ip = None
     request.headers = {"X-Forwarded-For": "invalid-ip-format"}
 
     config = SecurityConfig()
@@ -55,6 +65,7 @@ async def test_extract_client_ip_with_invalid_forwarded_for() -> None:
 async def test_extract_client_ip_logs_warning_on_error() -> None:
     request = Mock()
     request.client_host = "192.168.1.1"
+    request.state.client_ip = None
     request.headers = {"X-Forwarded-For": "1.2.3.4"}
 
     config = SecurityConfig()

@@ -1,4 +1,5 @@
 import logging
+import time
 
 from guard_core.protocols.response_protocol import GuardResponse
 from guard_core.sync.core.checks.base import SecurityCheck
@@ -11,6 +12,8 @@ class SecurityCheckPipeline:
         self.logger = logging.getLogger(__name__)
 
     def execute(self, request: SyncGuardRequest) -> GuardResponse | None:
+        request.state._guard_pipeline_start = time.monotonic()
+
         for check in self.checks:
             try:
                 response = check.check(request)

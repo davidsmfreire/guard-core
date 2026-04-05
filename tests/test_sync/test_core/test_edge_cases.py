@@ -156,6 +156,7 @@ def test_send_middleware_event_with_geo_ip_exception() -> None:
 
     mock_request = Mock()
     mock_request.client_host = "192.168.1.1"
+    mock_request.state.client_ip = None
     mock_request.url_path = "/test"
     mock_request.method = "GET"
     mock_request.headers = {"User-Agent": "TestAgent"}

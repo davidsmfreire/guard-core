@@ -113,29 +113,6 @@ def setup_custom_logging(
     return logger
 
 
-async def _check_ip_spoofing(
-    connecting_ip: str,
-    forwarded_for: str | None,
-    config: Any,
-    request: GuardRequest,
-    agent_handler: AgentHandlerProtocol | None,
-) -> None:
-    if forwarded_for and not config.trusted_proxies:
-        safe_forwarded_for = _sanitize_for_log(forwarded_for)
-        logging.warning(
-            f"Potential IP spoof attempt: X-Forwarded-For header "  # nosemgrep
-            f"({safe_forwarded_for}) received from untrusted IP {connecting_ip}"
-        )
-        await send_agent_event(
-            agent_handler,
-            "suspicious_request",
-            connecting_ip,
-            "spoofing_detected",
-            f"Potential IP spoof attempt: X-Forwarded-For header {forwarded_for}",
-            request,
-        )
-
-
 def _is_trusted_proxy(connecting_ip: str, trusted_proxies: list[str]) -> bool:
     try:
         connecting_ip_obj = ip_address(connecting_ip)
@@ -169,15 +146,15 @@ async def extract_client_ip(
     config: Any,
     agent_handler: AgentHandlerProtocol | None = None,
 ) -> str:
+    cached_ip: str | None = getattr(request.state, "client_ip", None)
+    if cached_ip:
+        return cached_ip
+
     if not request.client_host:
         return "unknown"
 
     connecting_ip = request.client_host
     forwarded_for = request.headers.get("X-Forwarded-For")
-
-    await _check_ip_spoofing(
-        connecting_ip, forwarded_for, config, request, agent_handler
-    )
 
     if not config.trusted_proxies:
         return connecting_ip

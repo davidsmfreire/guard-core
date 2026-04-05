@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -43,6 +44,13 @@ class SecurityEventBus:
                 except Exception:
                     pass
 
+            pipeline_start = getattr(request.state, "_guard_pipeline_start", None)
+            response_time = (
+                (time.monotonic() - pipeline_start)
+                if isinstance(pipeline_start, (int, float))
+                else None
+            )
+
             from guard_agent import SecurityEvent
 
             event = SecurityEvent(
@@ -55,6 +63,7 @@ class SecurityEventBus:
                 reason=reason,
                 endpoint=str(request.url_path),
                 method=request.method,
+                response_time=response_time,
                 metadata=kwargs,
             )
 
