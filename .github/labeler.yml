@@ -1,0 +1,118 @@
+"area: protocols":
+  - changed-files:
+      - any-glob-to-any-file:
+          - guard_core/protocols/**
+          - guard_core/sync/protocols/**
+
+"area: checks":
+  - changed-files:
+      - any-glob-to-any-file:
+          - guard_core/core/checks/**
+          - guard_core/sync/core/checks/**
+          - tests/test_core/test_checks/**
+
+"area: detection-engine":
+  - changed-files:
+      - any-glob-to-any-file:
+          - guard_core/detection_engine/**
+          - guard_core/sync/detection_engine/**
+
+"area: handlers":
+  - changed-files:
+      - any-glob-to-any-file:
+          - guard_core/handlers/**
+          - guard_core/sync/handlers/**
+          - tests/test_handlers_integration.py
+          - tests/test_handler_edge_cases.py
+
+"area: decorators":
+  - changed-files:
+      - any-glob-to-any-file:
+          - guard_core/decorators/**
+          - guard_core/sync/decorators/**
+          - tests/test_decorators/**
+
+"area: core-subsystems":
+  - changed-files:
+      - any-glob-to-any-file:
+          - guard_core/core/responses/**
+          - guard_core/core/routing/**
+          - guard_core/core/validation/**
+          - guard_core/core/bypass/**
+          - guard_core/core/behavioral/**
+          - guard_core/core/events/**
+          - guard_core/core/initialization/**
+          - guard_core/sync/core/**
+          - tests/test_core/**
+
+"area: models":
+  - changed-files:
+      - any-glob-to-any-file:
+          - guard_core/models.py
+
+"area: prompt-injection":
+  - changed-files:
+      - any-glob-to-any-file:
+          - guard_core/prompt_injection/**
+          - guard_core/sync/prompt_injection/**
+          - benchmarks/prompt_injection/**
+
+"area: sync":
+  - changed-files:
+      - any-glob-to-any-file:
+          - guard_core/sync/**
+
+"area: utils":
+  - changed-files:
+      - any-glob-to-any-file:
+          - guard_core/utils.py
+          - guard_core/exceptions.py
+
+"area: scripts":
+  - changed-files:
+      - any-glob-to-any-file:
+          - scripts/**
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - tests/**
+
+benchmarks:
+  - changed-files:
+      - any-glob-to-any-file:
+          - benchmarks/**
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/**
+          - mkdocs.yml
+          - README.md
+          - CHANGELOG.md
+          - CONTRIBUTING.md
+          - SECURITY.md
+          - CODE_OF_CONDUCT.md
+          - LICENSE
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/**
+          - .pre-commit-config.yaml
+
+build:
+  - changed-files:
+      - any-glob-to-any-file:
+          - Makefile
+          - Dockerfile
+          - compose.yml
+          - setup.py
+          - MANIFEST.in
+          - vulture_whitelist.py
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - pyproject.toml
+          - uv.lock
