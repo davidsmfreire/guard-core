@@ -49,9 +49,23 @@ ___
 Install
 -------
 
-```bash
-pip install guard-core
-```
+=== "uv"
+
+    ```bash
+    uv add guard-core
+    ```
+
+=== "poetry"
+
+    ```bash
+    poetry add guard-core
+    ```
+
+=== "pip"
+
+    ```bash
+    pip install guard-core
+    ```
 
 !!! info "Python 3.10+"
     guard-core requires Python 3.10 or higher.
@@ -68,6 +82,7 @@ Documentation
 - [Protocol Reference](architecture/protocols.md) -- `GuardRequest`, `GuardResponse`, `GuardResponseFactory`, `GuardMiddlewareProtocol`
 - [Security Pipeline](architecture/pipeline.md) -- `SecurityCheckPipeline`, all 17 checks, adding custom checks
 - [Event System](architecture/events.md) -- `SecurityEventBus`, `MetricsCollector`, hooking into events
+- [Telemetry](architecture/telemetry.md) -- muting events/metrics/check logs, OpenTelemetry, Logfire, adapter wiring
 - [Dependency Injection](architecture/dependency-injection.md) -- context objects, `HandlerInitializer`, singleton lifecycle
 
 ### API Reference

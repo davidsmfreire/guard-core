@@ -193,10 +193,6 @@ def test_rule_update_loop_handles_exceptions(
     assert call_count >= 1
 
 
-def test_rule_update_loop_cancellation_logged() -> None:
-    pytest.skip("async-only test")
-
-
 def test_update_rules_disabled(
     config: SecurityConfig, mock_agent_handler: MagicMock
 ) -> None:
@@ -1258,10 +1254,6 @@ def test_force_update(
         mock_update_rules.assert_called_once()
 
 
-def test_stop_with_task() -> None:
-    pytest.skip("async-only test")
-
-
 def test_stop_without_task(
     config: SecurityConfig, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -1275,3 +1267,47 @@ def test_stop_without_task(
 
     assert manager.update_task is None
     assert "Stopped dynamic rule update loop" not in caplog.text
+
+
+def test_apply_ip_rules_whitelist_only() -> None:
+    from datetime import datetime, timezone
+    from unittest.mock import MagicMock, patch
+
+    from guard_core.models import DynamicRules, SecurityConfig
+    from guard_core.sync.handlers.dynamic_rule_handler import DynamicRuleManager
+
+    DynamicRuleManager._instance = None
+    mgr = DynamicRuleManager(SecurityConfig())
+    rules = DynamicRules(
+        rule_id="r1",
+        version=1,
+        timestamp=datetime.now(timezone.utc),
+        ip_blacklist=[],
+        ip_whitelist=["10.0.0.1"],
+    )
+    with patch(
+        "guard_core.sync.handlers.ipban_handler.ip_ban_manager.unban_ip",
+        new=MagicMock(),
+    ):
+        mgr._apply_ip_rules(rules)
+    DynamicRuleManager._instance = None
+
+
+def test_apply_rate_limit_rules_global_without_window() -> None:
+    from datetime import datetime, timezone
+
+    from guard_core.models import DynamicRules, SecurityConfig
+    from guard_core.sync.handlers.dynamic_rule_handler import DynamicRuleManager
+
+    DynamicRuleManager._instance = None
+    mgr = DynamicRuleManager(SecurityConfig())
+    rules = DynamicRules(
+        rule_id="r1",
+        version=1,
+        timestamp=datetime.now(timezone.utc),
+        global_rate_limit=100,
+        global_rate_window=None,
+    )
+    mgr._apply_rate_limit_rules(rules)
+    assert mgr.config.rate_limit == 100
+    DynamicRuleManager._instance = None

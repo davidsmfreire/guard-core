@@ -1,6 +1,10 @@
 from guard_core.protocols.response_protocol import GuardResponse
 from guard_core.sync.core.checks.base import SecurityCheck
 from guard_core.sync.core.checks.helpers import detect_penetration_patterns
+from guard_core.sync.core.events.event_types import (
+    EVENT_DECORATOR_VIOLATION,
+    EVENT_PENETRATION_ATTEMPT,
+)
 from guard_core.sync.handlers.ipban_handler import ip_ban_manager
 from guard_core.sync.protocols.request_protocol import SyncGuardRequest
 from guard_core.sync.utils import log_activity
@@ -22,12 +26,14 @@ class SuspiciousActivityCheck(SecurityCheck):
             passive_mode=True,
             trigger_info=trigger_info,
             level=self.config.log_suspicious_level,
+            check_name=self.check_name,
+            muted_check_logs=self.config.muted_check_logs,
         )
 
         message = "Suspicious pattern detected (passive mode)"
 
         self.middleware.event_bus.send_middleware_event(
-            event_type="penetration_attempt",
+            event_type=EVENT_PENETRATION_ATTEMPT,
             request=request,
             action_taken="logged_only",
             reason=f"{message}: {trigger_info}",
@@ -57,6 +63,8 @@ class SuspiciousActivityCheck(SecurityCheck):
                 log_type="suspicious",
                 reason=f"IP banned due to suspicious activity: {sus_specs}",
                 level=self.config.log_suspicious_level,
+                check_name=self.check_name,
+                muted_check_logs=self.config.muted_check_logs,
             )
 
             return self.middleware.create_error_response(
@@ -70,10 +78,12 @@ class SuspiciousActivityCheck(SecurityCheck):
             log_type="suspicious",
             reason=f"Suspicious activity detected for IP: {sus_specs}",
             level=self.config.log_suspicious_level,
+            check_name=self.check_name,
+            muted_check_logs=self.config.muted_check_logs,
         )
 
         self.middleware.event_bus.send_middleware_event(
-            event_type="penetration_attempt",
+            event_type=EVENT_PENETRATION_ATTEMPT,
             request=request,
             action_taken="request_blocked",
             reason=f"Penetration attempt detected: {trigger_info}",
@@ -105,7 +115,7 @@ class SuspiciousActivityCheck(SecurityCheck):
 
         if trigger_info == "disabled_by_decorator":
             self.middleware.event_bus.send_middleware_event(
-                event_type="decorator_violation",
+                event_type=EVENT_DECORATOR_VIOLATION,
                 request=request,
                 action_taken="detection_disabled",
                 reason="Suspicious pattern detection disabled by route decorator",

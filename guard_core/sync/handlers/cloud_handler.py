@@ -123,11 +123,10 @@ class CloudManager:
             return
         added = new_ranges - old_ranges
         removed = old_ranges - new_ranges
-        if added or removed:
-            self.logger.info(
-                f"Cloud IP range update for {provider}: "
-                f"+{len(added)} added, -{len(removed)} removed"
-            )
+        self.logger.info(
+            f"Cloud IP range update for {provider}: "
+            f"+{len(added)} added, -{len(removed)} removed"
+        )
 
     def _refresh_providers(self, providers: set[str] = _ALL_PROVIDERS) -> None:
         for provider in providers:
@@ -239,11 +238,13 @@ class CloudManager:
         network: str,
         action_taken: str = "request_blocked",
     ) -> None:
+        from guard_core.sync.core.events.event_types import EVENT_CLOUD_BLOCKED
+
         if not self.agent_handler:
             return
 
         self._send_cloud_event(
-            event_type="cloud_blocked",
+            event_type=EVENT_CLOUD_BLOCKED,
             ip_address=ip,
             action_taken=action_taken,
             reason=f"IP belongs to blocked cloud provider: {provider}",

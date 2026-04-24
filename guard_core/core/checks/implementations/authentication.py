@@ -1,5 +1,6 @@
 from guard_core.core.checks.base import SecurityCheck
 from guard_core.core.checks.helpers import validate_auth_header
+from guard_core.core.events.event_types import EVENT_DECORATOR_VIOLATION
 from guard_core.decorators.base import RouteConfig
 from guard_core.protocols.request_protocol import GuardRequest
 from guard_core.protocols.response_protocol import GuardResponse
@@ -21,10 +22,12 @@ class AuthenticationCheck(SecurityCheck):
             reason=f"Authentication failure: {auth_reason}",
             level=self.config.log_suspicious_level,
             passive_mode=self.config.passive_mode,
+            check_name=self.check_name,
+            muted_check_logs=self.config.muted_check_logs,
         )
 
         await self.middleware.event_bus.send_middleware_event(
-            event_type="decorator_violation",
+            event_type=EVENT_DECORATOR_VIOLATION,
             request=request,
             action_taken="request_blocked"
             if not self.config.passive_mode

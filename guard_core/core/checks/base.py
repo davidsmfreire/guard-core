@@ -15,13 +15,11 @@ class SecurityCheck(ABC):
         self.logger = middleware.logger
 
     @abstractmethod
-    async def check(self, request: GuardRequest) -> GuardResponse | None:
-        pass  # pragma: no cover
+    async def check(self, request: GuardRequest) -> GuardResponse | None: ...
 
     @property
     @abstractmethod
-    def check_name(self) -> str:
-        pass  # pragma: no cover
+    def check_name(self) -> str: ...
 
     async def send_event(
         self,
@@ -46,3 +44,27 @@ class SecurityCheck(ABC):
 
     def is_passive_mode(self) -> bool:
         return self.config.passive_mode
+
+    async def log_if_allowed(
+        self,
+        request: GuardRequest,
+        *,
+        log_type: str = "request",
+        reason: str = "",
+        passive_mode: bool = False,
+        trigger_info: str = "",
+        level: Any = "WARNING",
+    ) -> None:
+        from guard_core.utils import log_activity
+
+        await log_activity(
+            request,
+            self.logger,
+            log_type=log_type,
+            reason=reason,
+            passive_mode=passive_mode,
+            trigger_info=trigger_info,
+            level=level,
+            check_name=self.check_name,
+            muted_check_logs=self.config.muted_check_logs,
+        )

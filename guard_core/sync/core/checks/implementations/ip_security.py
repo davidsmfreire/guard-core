@@ -1,6 +1,10 @@
 from guard_core.protocols.response_protocol import GuardResponse
 from guard_core.sync.core.checks.base import SecurityCheck
 from guard_core.sync.core.checks.helpers import check_route_ip_access
+from guard_core.sync.core.events.event_types import (
+    EVENT_DECORATOR_VIOLATION,
+    EVENT_IP_BLOCKED,
+)
 from guard_core.sync.decorators.base import RouteConfig
 from guard_core.sync.handlers.ipban_handler import ip_ban_manager
 from guard_core.sync.protocols.request_protocol import SyncGuardRequest
@@ -31,6 +35,8 @@ class IpSecurityCheck(SecurityCheck):
             reason=f"Banned IP attempted access: {client_ip}",
             level=self.config.log_suspicious_level,
             passive_mode=self.config.passive_mode,
+            check_name=self.check_name,
+            muted_check_logs=self.config.muted_check_logs,
         )
 
         if not self.config.passive_mode:
@@ -56,10 +62,12 @@ class IpSecurityCheck(SecurityCheck):
             reason=f"IP not allowed by route config: {client_ip}",
             level=self.config.log_suspicious_level,
             passive_mode=self.config.passive_mode,
+            check_name=self.check_name,
+            muted_check_logs=self.config.muted_check_logs,
         )
 
         self.middleware.event_bus.send_middleware_event(
-            event_type="decorator_violation",
+            event_type=EVENT_DECORATOR_VIOLATION,
             request=request,
             action_taken="request_blocked"
             if not self.config.passive_mode
@@ -96,10 +104,12 @@ class IpSecurityCheck(SecurityCheck):
             reason=f"IP not allowed: {client_ip}",
             level=self.config.log_suspicious_level,
             passive_mode=self.config.passive_mode,
+            check_name=self.check_name,
+            muted_check_logs=self.config.muted_check_logs,
         )
 
         self.middleware.event_bus.send_middleware_event(
-            event_type="ip_blocked",
+            event_type=EVENT_IP_BLOCKED,
             request=request,
             action_taken="request_blocked"
             if not self.config.passive_mode

@@ -12,7 +12,7 @@ from guard_core.protocols.request_protocol import GuardRequest
 from guard_core.protocols.response_protocol import GuardResponse
 
 if TYPE_CHECKING:
-    from guard_agent import AgentConfig  # pragma: no cover
+    from guard_agent import AgentConfig
 
 
 class SecurityConfig(BaseModel):
@@ -343,6 +343,54 @@ class SecurityConfig(BaseModel):
         le=5000,
     )
 
+    muted_event_types: set[str] = Field(
+        default_factory=set,
+        description="Event types to mute from telemetry dispatch",
+    )
+
+    muted_metric_types: set[str] = Field(
+        default_factory=set,
+        description="Metric types to mute from telemetry dispatch",
+    )
+
+    muted_check_logs: set[str] = Field(
+        default_factory=set,
+        description="Security check names to mute from pipeline logging",
+    )
+
+    enable_otel: bool = Field(
+        default=False,
+        description="Enable OpenTelemetry span/metric export (requires [otel] extra)",
+    )
+
+    otel_service_name: str = Field(
+        default="guard-core",
+        description="Service name for OpenTelemetry resource",
+    )
+
+    otel_exporter_endpoint: str | None = Field(
+        default=None,
+        description="OTLP HTTP endpoint for OpenTelemetry export",
+    )
+
+    otel_resource_attributes: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Additional OpenTelemetry resource attributes "
+            "(e.g. deployment.environment, service.version)."
+        ),
+    )
+
+    enable_logfire: bool = Field(
+        default=False,
+        description="Enable Logfire span/metric export (requires [logfire] extra)",
+    )
+
+    logfire_service_name: str = Field(
+        default="guard-core",
+        description="Service name for Logfire integration",
+    )
+
     # TODO: Add type hints to the decorator
     @field_validator("whitelist", "blacklist")  # type: ignore
     def validate_ip_lists(cls, v: list[str] | None) -> list[str] | None:
@@ -428,6 +476,42 @@ class SecurityConfig(BaseModel):
             )
 
         return self
+
+    @field_validator("muted_event_types")  # type: ignore
+    def validate_muted_event_types(cls, v: set[str]) -> set[str]:
+        from guard_core.core.events.event_types import EVENT_TYPE_VALUES
+
+        invalid = v - EVENT_TYPE_VALUES
+        if invalid:
+            raise ValueError(
+                f"Unknown event types in muted_event_types: {sorted(invalid)}. "
+                f"Valid: {sorted(EVENT_TYPE_VALUES)}"
+            )
+        return v
+
+    @field_validator("muted_metric_types")  # type: ignore
+    def validate_muted_metric_types(cls, v: set[str]) -> set[str]:
+        from guard_core.core.events.event_types import METRIC_TYPE_VALUES
+
+        invalid = v - METRIC_TYPE_VALUES
+        if invalid:
+            raise ValueError(
+                f"Unknown metric types in muted_metric_types: {sorted(invalid)}. "
+                f"Valid: {sorted(METRIC_TYPE_VALUES)}"
+            )
+        return v
+
+    @field_validator("muted_check_logs")  # type: ignore
+    def validate_muted_check_logs(cls, v: set[str]) -> set[str]:
+        from guard_core.core.events.event_types import CHECK_NAME_VALUES
+
+        invalid = v - CHECK_NAME_VALUES
+        if invalid:
+            raise ValueError(
+                f"Unknown check names in muted_check_logs: {sorted(invalid)}. "
+                f"Valid: {sorted(CHECK_NAME_VALUES)}"
+            )
+        return v
 
     def to_agent_config(self) -> "AgentConfig | None":
         if not self.enable_agent or not self.agent_api_key:

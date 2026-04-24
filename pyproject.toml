@@ -1,6 +1,6 @@
 [project]
 name = "guard-core"
-version = "1.0.3"
+version = "1.1.0"
 description = "Framework-agnostic security engine for the Guard ecosystem."
 authors = [
     {name = "Renzo Franceschini", email = "rennf93@users.noreply.github.com"}
@@ -37,7 +37,7 @@ Homepage = "https://github.com/rennf93/guard-core"
 dev = [
     "bandit[toml]",
     "deptry",
-    "fastapi-guard-agent",
+    "guard-agent",
     "mkdocs",
     "mkdocstrings",
     "mkdocstrings-python",
@@ -57,6 +57,13 @@ dev = [
     "types-requests",
     "vulture",
     "xenon",
+]
+otel = [
+    "opentelemetry-sdk",
+    "opentelemetry-exporter-otlp-proto-http",
+]
+logfire = [
+    "logfire",
 ]
 
 [build-system]
@@ -243,7 +250,7 @@ known_first_party = ["guard_core"]
 per_rule_ignores = { "DEP002" = [
     "bandit",
     "deptry",
-    "fastapi-guard-agent",
+    "guard-agent",
     "mkdocs",
     "mkdocstrings",
     "mkdocstrings-python",
@@ -264,4 +271,6 @@ per_rule_ignores = { "DEP002" = [
     "types-requests",
     "vulture",
     "xenon",
+], "DEP003" = [
+    "guard-agent",
 ] }

@@ -259,6 +259,56 @@ def test_initialize_agent_for_handlers_with_geoip(
         mock_geo_ip_handler.initialize_agent.assert_called_once_with(mock_agent_handler)
 
 
+def test_initialize_agent_for_handlers_without_rate_limit_handler(
+    security_config: SecurityConfig,
+    mock_agent_handler: Mock,
+) -> None:
+    initializer = HandlerInitializer(
+        config=security_config,
+        agent_handler=mock_agent_handler,
+        rate_limit_handler=None,
+    )
+    with (
+        patch("guard_core.sync.handlers.cloud_handler.cloud_handler") as mock_cloud,
+        patch("guard_core.sync.handlers.ipban_handler.ip_ban_manager") as mock_ipban,
+        patch(
+            "guard_core.sync.handlers.suspatterns_handler.sus_patterns_handler"
+        ) as mock_sus,
+    ):
+        mock_cloud.initialize_agent = MagicMock()
+        mock_ipban.initialize_agent = MagicMock()
+        mock_sus.initialize_agent = MagicMock()
+
+        initializer.initialize_agent_for_handlers()
+
+        mock_ipban.initialize_agent.assert_called_once_with(mock_agent_handler)
+        mock_sus.initialize_agent.assert_called_once_with(mock_agent_handler)
+
+
+def test_initialize_agent_for_handlers_geoip_without_initialize_agent(
+    security_config: SecurityConfig,
+    mock_agent_handler: Mock,
+) -> None:
+    geo_ip = Mock(spec=[])
+    initializer = HandlerInitializer(
+        config=security_config,
+        agent_handler=mock_agent_handler,
+        geo_ip_handler=geo_ip,
+    )
+    with (
+        patch("guard_core.sync.handlers.cloud_handler.cloud_handler") as mock_cloud,
+        patch("guard_core.sync.handlers.ipban_handler.ip_ban_manager") as mock_ipban,
+        patch(
+            "guard_core.sync.handlers.suspatterns_handler.sus_patterns_handler"
+        ) as mock_sus,
+    ):
+        mock_cloud.initialize_agent = MagicMock()
+        mock_ipban.initialize_agent = MagicMock()
+        mock_sus.initialize_agent = MagicMock()
+
+        initializer.initialize_agent_for_handlers()
+
+
 def test_initialize_dynamic_rule_manager_disabled(
     security_config: SecurityConfig,
 ) -> None:
@@ -351,9 +401,14 @@ def test_initialize_agent_integrations_full(
 
         mock_init_handlers.assert_called_once()
 
-        mock_guard_decorator.initialize_agent.assert_called_once_with(
-            mock_agent_handler
+        from guard_core.sync.core.events.composite_handler import (
+            CompositeAgentHandler,
         )
+
+        mock_guard_decorator.initialize_agent.assert_called_once()
+        passed = mock_guard_decorator.initialize_agent.call_args.args[0]
+        assert isinstance(passed, CompositeAgentHandler)
+        assert mock_agent_handler in passed._handlers
 
         mock_init_drm.assert_called_once()
 
@@ -411,3 +466,86 @@ def test_initialize_agent_integrations_decorator_no_method(
         initializer.initialize_agent_integrations()
 
         mock_agent_handler.start.assert_called_once()
+
+
+def test_build_composite_handler_agent_only(security_config: SecurityConfig) -> None:
+    agent = Mock()
+    security_config.enable_otel = False
+    security_config.enable_logfire = False
+    initializer = HandlerInitializer(config=security_config, agent_handler=agent)
+    result = initializer.build_composite_handler()
+    from guard_core.sync.core.events.composite_handler import CompositeAgentHandler
+
+    assert isinstance(result, CompositeAgentHandler)
+    assert result._handlers == [agent]
+
+
+def test_build_composite_handler_with_otel(security_config: SecurityConfig) -> None:
+    agent = Mock()
+    security_config.enable_otel = True
+    security_config.enable_logfire = False
+    initializer = HandlerInitializer(config=security_config, agent_handler=agent)
+    with patch("guard_core.sync.core.events.otel_handler.OtelHandler") as MockOtel:
+        MockOtel.return_value = Mock()
+        result = initializer.build_composite_handler()
+    from guard_core.sync.core.events.composite_handler import CompositeAgentHandler
+
+    assert isinstance(result, CompositeAgentHandler)
+
+
+def test_build_composite_handler_with_logfire(security_config: SecurityConfig) -> None:
+    agent = Mock()
+    security_config.enable_otel = False
+    security_config.enable_logfire = True
+    initializer = HandlerInitializer(config=security_config, agent_handler=agent)
+    with patch("guard_core.sync.core.events.logfire_handler.LogfireHandler") as MockLF:
+        MockLF.return_value = Mock()
+        result = initializer.build_composite_handler()
+    from guard_core.sync.core.events.composite_handler import CompositeAgentHandler
+
+    assert isinstance(result, CompositeAgentHandler)
+
+
+def test_build_composite_handler_otel_and_logfire(
+    security_config: SecurityConfig,
+) -> None:
+    agent = Mock()
+    security_config.enable_otel = True
+    security_config.enable_logfire = True
+    initializer = HandlerInitializer(config=security_config, agent_handler=agent)
+    with (
+        patch("guard_core.sync.core.events.otel_handler.OtelHandler") as MockOtel,
+        patch("guard_core.sync.core.events.logfire_handler.LogfireHandler") as MockLF,
+    ):
+        MockOtel.return_value = Mock()
+        MockLF.return_value = Mock()
+        result = initializer.build_composite_handler()
+    from guard_core.sync.core.events.composite_handler import CompositeAgentHandler
+
+    assert isinstance(result, CompositeAgentHandler)
+
+
+def test_build_composite_handler_no_agent(security_config: SecurityConfig) -> None:
+    security_config.enable_otel = True
+    security_config.enable_logfire = False
+    initializer = HandlerInitializer(config=security_config, agent_handler=None)
+    with patch("guard_core.sync.core.events.otel_handler.OtelHandler") as MockOtel:
+        mock_otel = Mock()
+        MockOtel.return_value = mock_otel
+        result = initializer.build_composite_handler()
+    from guard_core.sync.core.events.composite_handler import CompositeAgentHandler
+
+    assert isinstance(result, CompositeAgentHandler)
+    assert result._handlers == [mock_otel]
+
+
+def test_build_event_filter(security_config: SecurityConfig) -> None:
+    from guard_core.sync.core.events.event_types import EventFilter
+
+    security_config.muted_event_types = {"penetration_attempt"}
+    security_config.muted_metric_types = {"response_time"}
+    initializer = HandlerInitializer(config=security_config)
+    result = initializer.build_event_filter()
+    assert isinstance(result, EventFilter)
+    assert result.muted_event_types == frozenset({"penetration_attempt"})
+    assert result.muted_metric_types == frozenset({"response_time"})
