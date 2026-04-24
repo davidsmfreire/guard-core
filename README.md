@@ -46,6 +46,14 @@ ___
     </a>
 </p>
 
+<p align="center">
+    <a href="https://guard-core.com">Website</a> &middot;
+    <a href="https://rennf93.github.io/guard-core/latest/">Docs</a> &middot;
+    <a href="https://playground.guard-core.com">Playground</a> &middot;
+    <a href="https://app.guard-core.com">Dashboard</a> &middot;
+    <a href="https://discord.gg/ZW7ZJbjMkK">Discord</a>
+</p>
+
 ___
 
 Documentation
@@ -60,14 +68,16 @@ ___
 Ecosystem
 ---------
 
-Guard Core is the engine. Framework adapters are thin wrappers that translate native request/response types into Guard Core's protocols:
+Guard Core is the engine. Framework adapters are thin wrappers that translate native request/response types into Guard Core's protocols. The telemetry agent ships security events and metrics to the monitoring backend:
 
-```text
-guard-core (this library)
-├── fastapi-guard      ← ASGI adapter for FastAPI/Starlette
-├── flaskapi-guard     ← WSGI adapter for Flask
-└── djapi-guard        ← Django middleware adapter
-```
+| Package | Role | PyPI |
+|---|---|---|
+| [guard-core](https://github.com/rennf93/guard-core) | Framework-agnostic security engine | [![PyPI](https://img.shields.io/pypi/v/guard-core)](https://pypi.org/project/guard-core/) |
+| [fastapi-guard](https://github.com/rennf93/fastapi-guard) | FastAPI / Starlette adapter | [![PyPI](https://img.shields.io/pypi/v/fastapi-guard)](https://pypi.org/project/fastapi-guard/) |
+| [flaskapi-guard](https://github.com/rennf93/flaskapi-guard) | Flask adapter | [![PyPI](https://img.shields.io/pypi/v/flaskapi-guard)](https://pypi.org/project/flaskapi-guard/) |
+| [djapi-guard](https://github.com/rennf93/djapi-guard) | Django adapter | [![PyPI](https://img.shields.io/pypi/v/djapi-guard)](https://pypi.org/project/djapi-guard/) |
+| [tornadoapi-guard](https://github.com/rennf93/tornadoapi-guard) | Tornado adapter | [![PyPI](https://img.shields.io/pypi/v/tornadoapi-guard)](https://pypi.org/project/tornadoapi-guard/) |
+| [guard-agent](https://github.com/rennf93/fastapi-guard-agent) | Telemetry agent | [![PyPI](https://img.shields.io/pypi/v/guard-agent)](https://pypi.org/project/guard-agent/) |
 
 Adapter developers implement three protocols — `GuardRequest`, `GuardResponse`, and `GuardResponseFactory` — to bridge their framework into the security pipeline. Everything else (17 security checks, detection engine, Redis state, event telemetry) works out of the box.
 
