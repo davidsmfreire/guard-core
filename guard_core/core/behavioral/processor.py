@@ -1,3 +1,5 @@
+from typing import Any
+
 from guard_core.core.behavioral.context import BehavioralContext
 from guard_core.core.events.event_types import EVENT_DECORATOR_VIOLATION
 from guard_core.decorators.base import RouteConfig
@@ -9,16 +11,23 @@ class BehavioralProcessor:
     def __init__(self, context: BehavioralContext) -> None:
         self.context = context
 
+    def _behavior_tracker(self) -> Any | None:
+        if self.context.behavior_tracker is not None:
+            return self.context.behavior_tracker
+        if self.context.guard_decorator is not None:
+            return getattr(self.context.guard_decorator, "behavior_tracker", None)
+        return None
+
     async def process_usage_rules(
         self, request: GuardRequest, client_ip: str, route_config: RouteConfig
     ) -> None:
-        if not self.context.guard_decorator:
+        behavior_tracker = self._behavior_tracker()
+        if behavior_tracker is None:
             return
 
         endpoint_id = self.get_endpoint_id(request)
         for rule in route_config.behavior_rules:
             if rule.rule_type in ["usage", "frequency"]:
-                behavior_tracker = self.context.guard_decorator.behavior_tracker
                 threshold_exceeded = await behavior_tracker.track_endpoint_usage(
                     endpoint_id, client_ip, rule
                 )
@@ -40,7 +49,7 @@ class BehavioralProcessor:
                         endpoint_id=endpoint_id,
                     )
 
-                    await self.context.guard_decorator.behavior_tracker.apply_action(
+                    await behavior_tracker.apply_action(
                         rule,
                         client_ip,
                         endpoint_id,
@@ -54,13 +63,13 @@ class BehavioralProcessor:
         client_ip: str,
         route_config: RouteConfig,
     ) -> None:
-        if not self.context.guard_decorator:
+        behavior_tracker = self._behavior_tracker()
+        if behavior_tracker is None:
             return
 
         endpoint_id = self.get_endpoint_id(request)
         for rule in route_config.behavior_rules:
             if rule.rule_type == "return_pattern":
-                behavior_tracker = self.context.guard_decorator.behavior_tracker
                 pattern_detected = await behavior_tracker.track_return_pattern(
                     endpoint_id, client_ip, response, rule
                 )
@@ -81,7 +90,7 @@ class BehavioralProcessor:
                         endpoint_id=endpoint_id,
                     )
 
-                    await self.context.guard_decorator.behavior_tracker.apply_action(
+                    await behavior_tracker.apply_action(
                         rule,
                         client_ip,
                         endpoint_id,

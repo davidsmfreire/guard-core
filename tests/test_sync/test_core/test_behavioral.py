@@ -296,3 +296,153 @@ def test_process_usage_rules_skips_return_pattern_rules(
     processor.process_usage_rules(mock_request, "1.2.3.4", route_config)
     tracker = processor.context.guard_decorator.behavior_tracker
     tracker.track_endpoint_usage.assert_not_called()
+
+
+def test_process_usage_rules_uses_context_behavior_tracker_when_present(
+    mock_request: Mock,
+) -> None:
+    owned_tracker = Mock()
+    owned_tracker.track_endpoint_usage = MagicMock(return_value=False)
+    owned_tracker.apply_action = MagicMock()
+
+    decorator_tracker = Mock()
+    decorator_tracker.track_endpoint_usage = MagicMock(return_value=False)
+    decorator = Mock()
+    decorator.behavior_tracker = decorator_tracker
+
+    event_bus = Mock()
+    event_bus.send_middleware_event = MagicMock()
+
+    context = BehavioralContext(
+        config=Mock(),
+        logger=Mock(),
+        event_bus=event_bus,
+        guard_decorator=decorator,
+        behavior_tracker=owned_tracker,
+    )
+    processor = BehavioralProcessor(context)
+
+    rule = BehaviorRule(rule_type="usage", threshold=5, window=60, action="ban")
+    route_config = create_route_config_with_rules([rule])
+
+    processor.process_usage_rules(mock_request, "1.2.3.4", route_config)
+
+    owned_tracker.track_endpoint_usage.assert_called_once()
+    decorator_tracker.track_endpoint_usage.assert_not_called()
+
+
+def test_process_usage_rules_falls_back_to_decorator_tracker(
+    mock_request: Mock,
+) -> None:
+    decorator_tracker = Mock()
+    decorator_tracker.track_endpoint_usage = MagicMock(return_value=False)
+    decorator = Mock()
+    decorator.behavior_tracker = decorator_tracker
+
+    event_bus = Mock()
+    event_bus.send_middleware_event = MagicMock()
+
+    context = BehavioralContext(
+        config=Mock(),
+        logger=Mock(),
+        event_bus=event_bus,
+        guard_decorator=decorator,
+    )
+    processor = BehavioralProcessor(context)
+
+    rule = BehaviorRule(rule_type="usage", threshold=5, window=60, action="ban")
+    route_config = create_route_config_with_rules([rule])
+
+    processor.process_usage_rules(mock_request, "1.2.3.4", route_config)
+
+    decorator_tracker.track_endpoint_usage.assert_called_once()
+
+
+def test_process_usage_rules_returns_when_no_tracker_anywhere(
+    mock_request: Mock,
+) -> None:
+    event_bus = Mock()
+    event_bus.send_middleware_event = MagicMock()
+    context = BehavioralContext(
+        config=Mock(),
+        logger=Mock(),
+        event_bus=event_bus,
+        guard_decorator=None,
+        behavior_tracker=None,
+    )
+    processor = BehavioralProcessor(context)
+
+    rule = BehaviorRule(rule_type="usage", threshold=5, window=60, action="ban")
+    route_config = create_route_config_with_rules([rule])
+
+    processor.process_usage_rules(mock_request, "1.2.3.4", route_config)
+
+    event_bus.send_middleware_event.assert_not_called()
+
+
+def test_process_return_rules_uses_context_behavior_tracker_when_present(
+    mock_request: Mock,
+    mock_response: Mock,
+) -> None:
+    owned_tracker = Mock()
+    owned_tracker.track_return_pattern = MagicMock(return_value=False)
+
+    decorator_tracker = Mock()
+    decorator_tracker.track_return_pattern = MagicMock(return_value=False)
+    decorator = Mock()
+    decorator.behavior_tracker = decorator_tracker
+
+    event_bus = Mock()
+    event_bus.send_middleware_event = MagicMock()
+
+    context = BehavioralContext(
+        config=Mock(),
+        logger=Mock(),
+        event_bus=event_bus,
+        guard_decorator=decorator,
+        behavior_tracker=owned_tracker,
+    )
+    processor = BehavioralProcessor(context)
+
+    rule = BehaviorRule(
+        rule_type="return_pattern",
+        pattern="error",
+        threshold=5,
+        window=60,
+        action="ban",
+    )
+    route_config = create_route_config_with_rules([rule])
+
+    processor.process_return_rules(mock_request, mock_response, "1.2.3.4", route_config)
+
+    owned_tracker.track_return_pattern.assert_called_once()
+    decorator_tracker.track_return_pattern.assert_not_called()
+
+
+def test_process_return_rules_returns_when_no_tracker_anywhere(
+    mock_request: Mock,
+    mock_response: Mock,
+) -> None:
+    event_bus = Mock()
+    event_bus.send_middleware_event = MagicMock()
+    context = BehavioralContext(
+        config=Mock(),
+        logger=Mock(),
+        event_bus=event_bus,
+        guard_decorator=None,
+        behavior_tracker=None,
+    )
+    processor = BehavioralProcessor(context)
+
+    rule = BehaviorRule(
+        rule_type="return_pattern",
+        pattern="error",
+        threshold=5,
+        window=60,
+        action="ban",
+    )
+    route_config = create_route_config_with_rules([rule])
+
+    processor.process_return_rules(mock_request, mock_response, "1.2.3.4", route_config)
+
+    event_bus.send_middleware_event.assert_not_called()

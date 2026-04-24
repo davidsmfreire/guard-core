@@ -1,25 +1,6 @@
-from typing import Any
-
 from guard_core.models import SecurityConfig
 from guard_core.sync.core.initialization.handler_initializer import HandlerInitializer
 from guard_core.sync.handlers.behavior_handler import BehaviorTracker
-
-
-class _FakeAgent:
-    def start(self) -> None:
-        return None
-
-    def stop(self) -> None:
-        return None
-
-    def send_event(self, _: Any) -> None:
-        return None
-
-    def send_metric(self, _: Any) -> None:
-        return None
-
-    def initialize_redis(self, _: Any) -> None:
-        return None
 
 
 def test_build_enricher_uses_decorator_tracker_when_present() -> None:
@@ -34,7 +15,7 @@ def test_build_enricher_uses_decorator_tracker_when_present() -> None:
     init = HandlerInitializer(
         config=config,
         redis_handler=None,
-        agent_handler=_FakeAgent(),
+        agent_handler=object(),
         geo_ip_handler=None,
         rate_limit_handler=None,
         guard_decorator=decorator,
@@ -54,7 +35,7 @@ def test_build_enricher_builds_owned_tracker_when_decorator_missing() -> None:
     init = HandlerInitializer(
         config=config,
         redis_handler=None,
-        agent_handler=_FakeAgent(),
+        agent_handler=object(),
         geo_ip_handler=None,
         rate_limit_handler=None,
         guard_decorator=None,
@@ -75,7 +56,7 @@ def test_build_enricher_builds_owned_tracker_when_decorator_has_none() -> None:
     init = HandlerInitializer(
         config=config,
         redis_handler=None,
-        agent_handler=_FakeAgent(),
+        agent_handler=object(),
         geo_ip_handler=None,
         rate_limit_handler=None,
         guard_decorator=decorator,
@@ -83,3 +64,23 @@ def test_build_enricher_builds_owned_tracker_when_decorator_has_none() -> None:
     enricher = init.build_enricher()
     assert enricher is not None
     assert isinstance(enricher._context.behavior_tracker, BehaviorTracker)
+
+
+def test_build_enricher_stores_owned_tracker_on_initializer() -> None:
+    config = SecurityConfig(
+        enable_agent=True,
+        agent_api_key="k" * 10,
+        agent_project_id="p",
+        enable_enrichment=True,
+    )
+    init = HandlerInitializer(
+        config=config,
+        redis_handler=None,
+        agent_handler=object(),
+        geo_ip_handler=None,
+        rate_limit_handler=None,
+        guard_decorator=None,
+    )
+    assert init.behavior_tracker is None
+    init.build_enricher()
+    assert isinstance(init.behavior_tracker, BehaviorTracker)

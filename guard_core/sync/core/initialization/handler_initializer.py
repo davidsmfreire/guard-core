@@ -25,6 +25,7 @@ class HandlerInitializer:
         self.composite_handler: Any = None
         self.event_filter: Any = None
         self.enricher: Any = None
+        self.behavior_tracker: Any = None
 
     def build_enricher(self) -> Any | None:
         if not self.config.enable_enrichment:
@@ -47,6 +48,8 @@ class HandlerInitializer:
             from guard_core.sync.handlers.behavior_handler import BehaviorTracker
 
             behavior_tracker = BehaviorTracker(self.config)
+
+        self.behavior_tracker = behavior_tracker
 
         context = EnrichmentContext(
             config=self.config,

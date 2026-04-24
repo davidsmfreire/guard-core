@@ -390,15 +390,11 @@ def test_otlp_signal_endpoint_appends_signal_path_to_base() -> None:
 
 def test_otlp_signal_endpoint_rewrites_known_signal_suffix() -> None:
     assert (
-        OtelHandler._otlp_signal_endpoint(
-            "http://host:4318/v1/metrics", "/v1/traces"
-        )
+        OtelHandler._otlp_signal_endpoint("http://host:4318/v1/metrics", "/v1/traces")
         == "http://host:4318/v1/traces"
     )
     assert (
-        OtelHandler._otlp_signal_endpoint(
-            "http://host:4318/v1/logs", "/v1/metrics"
-        )
+        OtelHandler._otlp_signal_endpoint("http://host:4318/v1/logs", "/v1/metrics")
         == "http://host:4318/v1/metrics"
     )
 
