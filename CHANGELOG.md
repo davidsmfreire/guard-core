@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 
 ___
 
+v1.2.1 (2026-04-24)
+-------------------
+
+Integration fixes caught by end-to-end smoke test (v1.2.1)
+-----------------------------------------------------------
+
+### Fixed
+
+- `OtelHandler.start()` now normalizes the configured `otel_exporter_endpoint` by appending `/v1/traces` and `/v1/metrics` when the base URL lacks the signal path. Previously, users who set `otel_exporter_endpoint="http://collector:4318"` received 404 Not Found from every OTLP receiver. Matches the semantics of the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable. Also correctly rewrites explicit signal suffixes (`/v1/traces`, `/v1/metrics`, `/v1/logs`) so the traces exporter always gets `/v1/traces` and the metrics exporter always gets `/v1/metrics` regardless of which signal-specific path the user configured.
+- `HandlerInitializer.build_enricher()` now owns a `BehaviorTracker` instance when the user's `SecurityDecorator` does not supply one, and caches it as `HandlerInitializer.behavior_tracker` for reuse. Without this fix, `guard.behavior.correlation_key` and `guard.behavior.recent_event_count` never populated for adapters that instantiate the middleware and decorator separately (all four current adapters).
+- `BehavioralContext` gained an optional `behavior_tracker` field and `BehavioralProcessor` now threads writes through `context.behavior_tracker` when present, falling back to `guard_decorator.behavior_tracker` otherwise. This closes the architectural gap where the enricher read from one tracker while writes went to another — `guard.behavior.recent_event_count` now populates end-to-end when adapters thread the `HandlerInitializer.behavior_tracker` through their `BehavioralContext` construction (shipping in the next adapter releases).
+
+### Compat notes
+
+- No public API changes. `OtelHandler._otlp_signal_endpoint` is an internal helper. `BehavioralContext.behavior_tracker` has a default of `None` so existing callers continue to work unchanged.
+- Adapters should bump their `guard-core>=1.2.1` pin to pick up all three fixes. See the matching `fastapi-guard 5.1.1`, `flaskapi-guard`, `djapi-guard`, `tornadoapi-guard` releases — those ship the adapter-side threading changes that complete the behaviour-correlation wiring.
+
+___
+
 v1.2.0 (2026-04-24)
 -------------------
 
