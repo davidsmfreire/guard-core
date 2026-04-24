@@ -44,7 +44,7 @@ def test_build_log_message_for_suspicious_passive_mode_no_trigger() -> None:
 
 
 def test_log_at_level_unknown_level_is_noop(caplog: pytest.LogCaptureFixture) -> None:
-    logger = logging.getLogger("guard_core.sync.test.log_at_level_unknown")
+    logger = logging.getLogger("guard_core.test.log_at_level_unknown")
     with caplog.at_level(logging.DEBUG, logger=logger.name):
         _log_at_level(logger, "NOPE", "test-msg")
     assert not caplog.records
@@ -64,8 +64,13 @@ def test_check_blocked_countries_country_not_blocked() -> None:
     geo_ip = MagicMock()
     with patch(
         "guard_core.sync.utils.check_ip_country",
-        return_value=False,
-    ):
+        new=MagicMock(return_value=False),
+    ) as mock_check:
+
+        def _async_false(*_a, **_kw) -> bool:
+            return False
+
+        mock_check.side_effect = _async_false
         result = _check_blocked_countries("1.2.3.4", config, geo_ip)
     assert result is True
 
@@ -74,7 +79,11 @@ def test_check_json_fields_ignores_non_string_entries() -> None:
     from guard_core.sync.handlers.suspatterns_handler import sus_patterns_handler
 
     with patch.object(sus_patterns_handler, "detect") as mock_detect:
-        mock_detect.return_value = {"is_threat": False, "threats": []}
+
+        def _async_miss(*_a, **_kw):
+            return {"is_threat": False, "threats": []}
+
+        mock_detect.side_effect = _async_miss
         detected, trigger = _check_json_fields(
             {"k1": 123, "k2": None, "k3": ["a"]},
             context="test",
@@ -92,7 +101,11 @@ def test_detect_penetration_attempt_no_client_host() -> None:
     request.query_params = {}
     request.url_path = "/"
     request.headers = {}
-    request.body = MagicMock(return_value=b"")
+
+    def _body() -> bytes:
+        return b""
+
+    request.body = _body
 
     detected, _ = detect_penetration_attempt(request)
     assert detected is False
@@ -103,8 +116,13 @@ def test_detect_penetration_attempt_excluded_header_skipped() -> None:
     request.client_host = "1.2.3.4"
     request.query_params = {}
     request.url_path = "/"
+    # Excluded header with malicious-looking content — should be skipped.
     request.headers = {"User-Agent": "<script>alert(1)</script>"}
-    request.body = MagicMock(return_value=b"")
+
+    def _body() -> bytes:
+        return b""
+
+    request.body = _body
 
     detected, _ = detect_penetration_attempt(request)
     assert detected is False

@@ -461,15 +461,18 @@ def test_performance_large_input() -> None:
 
 
 def test_calculate_entropy_skips_zero_probability_counts() -> None:
+    # The branch where `probability > 0` is False is reachable only with a
+    # Counter that returns a zero-count entry — not possible from real text.
+    # Patch Counter so its values() iterator yields a 0-count entry.
     from guard_core.sync.detection_engine import semantic as semantic_mod
 
-    analyzer = semantic_mod.SemanticAnalyzer()
+    analyzer = SemanticAnalyzer()
 
     class _FakeCounter(dict):
         def __init__(self, _content):
             super().__init__()
             self["a"] = 1
-            self["b"] = 0
+            self["b"] = 0  # triggers the False branch
 
     with patch.object(semantic_mod, "Counter", _FakeCounter):
         entropy = analyzer.calculate_entropy("ab")
@@ -477,8 +480,6 @@ def test_calculate_entropy_skips_zero_probability_counts() -> None:
 
 
 def test_detect_encoding_layers_no_base64_run_skips_that_layer() -> None:
-    from guard_core.sync.detection_engine.semantic import SemanticAnalyzer
-
     analyzer = SemanticAnalyzer()
     layers = analyzer.detect_encoding_layers("%2A")
     assert layers >= 1

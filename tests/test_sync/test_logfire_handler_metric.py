@@ -7,7 +7,7 @@ import pytest
 
 
 def _fresh_logfire_handler_module():
-    module_name = "guard_core.core.events.logfire_handler"
+    module_name = "guard_core.sync.core.events.logfire_handler"
     if module_name in sys.modules:
         return importlib.reload(sys.modules[module_name])
     return importlib.import_module(module_name)
@@ -20,16 +20,16 @@ def _reload_logfire_handler_between_tests():
     _fresh_logfire_handler_module()
 
 
-async def test_logfire_handler_does_nothing_when_module_unavailable() -> None:
+def test_logfire_handler_does_nothing_when_module_unavailable() -> None:
     module = _fresh_logfire_handler_module()
     with patch.object(module, "_logfire_available", False):
         handler = module.LogfireHandler(
             config=SimpleNamespace(logfire_service_name="svc")
         )
-        await handler.send_metric(MagicMock())
+        handler.send_metric(MagicMock())
 
 
-async def test_send_metric_uses_logfire_info_with_tags() -> None:
+def test_send_metric_uses_logfire_info_with_tags() -> None:
     module = _fresh_logfire_handler_module()
     fake_logfire = MagicMock()
     metric = SimpleNamespace(
@@ -45,7 +45,7 @@ async def test_send_metric_uses_logfire_info_with_tags() -> None:
         handler = module.LogfireHandler(
             config=SimpleNamespace(logfire_service_name="svc")
         )
-        await handler.send_metric(metric)
+        handler.send_metric(metric)
 
     fake_logfire.info.assert_called_once()
     args, kwargs = fake_logfire.info.call_args
@@ -56,7 +56,7 @@ async def test_send_metric_uses_logfire_info_with_tags() -> None:
     assert kwargs["status"] == "200"
 
 
-async def test_send_metric_handles_missing_tags() -> None:
+def test_send_metric_handles_missing_tags() -> None:
     module = _fresh_logfire_handler_module()
     fake_logfire = MagicMock()
     metric = SimpleNamespace(
@@ -72,13 +72,13 @@ async def test_send_metric_handles_missing_tags() -> None:
         handler = module.LogfireHandler(
             config=SimpleNamespace(logfire_service_name="svc")
         )
-        await handler.send_metric(metric)
+        handler.send_metric(metric)
     fake_logfire.info.assert_called_once_with(
         "guard.metric.request_count", value=1, endpoint=""
     )
 
 
-async def test_send_metric_does_not_call_logfire_metric() -> None:
+def test_send_metric_does_not_call_logfire_metric() -> None:
     module = _fresh_logfire_handler_module()
     fake_logfire = MagicMock(spec=["info", "span", "configure"])
     metric = SimpleNamespace(
@@ -94,6 +94,6 @@ async def test_send_metric_does_not_call_logfire_metric() -> None:
         handler = module.LogfireHandler(
             config=SimpleNamespace(logfire_service_name="svc")
         )
-        await handler.send_metric(metric)
+        handler.send_metric(metric)
 
     assert not hasattr(fake_logfire, "metric") or not fake_logfire.metric.called

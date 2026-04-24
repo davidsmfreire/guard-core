@@ -335,6 +335,7 @@ def test_check_user_agent_allowed_route_blocklist_no_match() -> None:
     config = SecurityConfig(blocked_user_agents=[])
     route_config = RouteConfig()
     route_config.blocked_user_agents = ["badbot"]
+    # User agent doesn't match the route pattern, falls through to global check.
     assert check_user_agent_allowed("Mozilla/5.0", route_config, config) is True
 
 

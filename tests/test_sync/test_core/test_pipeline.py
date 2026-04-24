@@ -253,6 +253,7 @@ def test_pipeline_skips_block_log_when_check_is_muted(
     request.url_path = "/x"
     request.method = "GET"
     request.state = type("S", (), {})()
+
     with caplog.at_level(logging.INFO):
         result = pipeline.execute(request)
     assert result is not None
@@ -272,6 +273,7 @@ def test_pipeline_skips_error_log_when_check_is_muted(
     request.url_path = "/x"
     request.method = "GET"
     request.state = type("S", (), {})()
+
     with caplog.at_level(logging.ERROR):
         pipeline.execute(request)
     assert not any("Error in security check" in r.getMessage() for r in caplog.records)
@@ -294,6 +296,7 @@ def test_pipeline_skips_fail_secure_log_when_check_is_muted(
     request.url_path = "/x"
     request.method = "GET"
     request.state = type("S", (), {})()
+
     with caplog.at_level(logging.WARNING):
         pipeline.execute(request)
     assert not any(

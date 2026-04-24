@@ -95,8 +95,11 @@ class OtelHandler:
             carrier: dict[str, str] = {"traceparent": traceparent}
             if tracestate:
                 carrier["tracestate"] = tracestate
-            propagator = TraceContextTextMapPropagator()
-            parent_ctx = propagator.extract(carrier=carrier)
+            try:
+                propagator = TraceContextTextMapPropagator()
+                parent_ctx = propagator.extract(carrier=carrier)
+            except Exception:
+                parent_ctx = None
 
         with self._tracer.start_as_current_span(
             f"guard.event.{event_type}", context=parent_ctx

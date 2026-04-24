@@ -401,9 +401,7 @@ def test_initialize_agent_integrations_full(
 
         mock_init_handlers.assert_called_once()
 
-        from guard_core.sync.core.events.composite_handler import (
-            CompositeAgentHandler,
-        )
+        from guard_core.sync.core.events.composite_handler import CompositeAgentHandler
 
         mock_guard_decorator.initialize_agent.assert_called_once()
         passed = mock_guard_decorator.initialize_agent.call_args.args[0]

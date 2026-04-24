@@ -295,6 +295,8 @@ def test_clear_cache_thread_safety(compiler: PatternCompiler) -> None:
 def test_compile_pattern_handles_cache_race_between_outer_and_locked_check(
     compiler: PatternCompiler,
 ) -> None:
+    # Simulate TOCTOU: outer `if cache_key in ...` is True, then cache is cleared
+    # before we acquire the lock. Inner check is False, fall through to re-compile.
     pattern = r"race_me"
     cache_key = f"{hash(pattern)}:{re.IGNORECASE | re.MULTILINE}"
     compiler._compiled_cache[cache_key] = re.compile(pattern)
@@ -321,6 +323,8 @@ def test_compile_pattern_handles_cache_race_between_outer_and_locked_check(
 def test_compile_pattern_returns_cached_entry_when_populated_during_lock_wait(
     compiler: PatternCompiler,
 ) -> None:
+    # Outer `in self._compiled_cache` is False. Before we enter the second lock,
+    # another coroutine populates the cache. Inner `not in` is False; return it.
     pattern = r"populated_during_wait"
     cache_key = f"{hash(pattern)}:{re.IGNORECASE | re.MULTILINE}"
     pre_compiled = re.compile(pattern)

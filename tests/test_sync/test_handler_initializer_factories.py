@@ -6,9 +6,7 @@ import pytest
 from guard_core.models import SecurityConfig
 from guard_core.sync.core.events.metrics import MetricsCollector
 from guard_core.sync.core.events.middleware_events import SecurityEventBus
-from guard_core.sync.core.initialization.handler_initializer import (
-    HandlerInitializer,
-)
+from guard_core.sync.core.initialization.handler_initializer import HandlerInitializer
 
 
 def _initializer(config: SecurityConfig) -> HandlerInitializer:
@@ -120,6 +118,30 @@ def test_build_metrics_collector_before_init_raises() -> None:
     initializer = _initializer(SecurityConfig())
     with pytest.raises(RuntimeError, match="initialize_agent_integrations"):
         initializer.build_metrics_collector()
+
+
+def test_composite_routes_subsystem_events_through_filter() -> None:
+    config = SecurityConfig(
+        muted_event_types={"access_denied"},
+        agent_enable_events=True,
+    )
+    raw_agent = MagicMock()
+    raw_agent.send_event = MagicMock()
+    raw_agent.initialize_redis = MagicMock()
+    initializer = HandlerInitializer(config=config, agent_handler=raw_agent)
+    with (
+        patch.object(initializer, "initialize_agent_for_handlers", MagicMock()),
+        patch.object(initializer, "initialize_dynamic_rule_manager", MagicMock()),
+    ):
+        initializer.initialize_agent_integrations()
+
+    event = type("E", (), {"event_type": "access_denied"})()
+    initializer.composite_handler.send_event(event)
+    raw_agent.send_event.assert_not_called()
+
+    allowed = type("E", (), {"event_type": "ip_blocked"})()
+    initializer.composite_handler.send_event(allowed)
+    raw_agent.send_event.assert_called_once()
 
 
 def test_composite_start_exception_is_logged_not_raised(

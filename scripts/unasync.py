@@ -264,19 +264,21 @@ def transform_source(content: str) -> str:
 def _skip_async_only_tests(content: str) -> str:
     lines = content.split("\n")
     result: list[str] = []
+    pending_decorators: list[str] = []
     skipping = False
 
     for line in lines:
+        stripped = line.lstrip()
+
+        if not skipping and stripped.startswith("@"):
+            pending_decorators.append(line)
+            continue
+
         if "# async-only" in line:
             match = re.match(r"^(\s*)(?:async )?def (test_\w+)\(", line)
             if match:
-                indent = match.group(1)
-                name = match.group(2)
                 skipping = True
-                result.append(f"{indent}def {name}() -> None:")
-                result.append(f'{indent}    pytest.skip("async-only test")')
-                result.append("")
-                result.append("")
+                pending_decorators = []
                 continue
 
         if skipping:
@@ -288,6 +290,9 @@ def _skip_async_only_tests(content: str) -> str:
                 result.append(line)
             continue
 
+        if pending_decorators:
+            result.extend(pending_decorators)
+            pending_decorators = []
         result.append(line)
 
     return "\n".join(result)

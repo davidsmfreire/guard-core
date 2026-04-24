@@ -158,6 +158,46 @@ async def test_send_event_malformed_traceparent_does_not_crash() -> None:
     tracer.start_as_current_span.assert_called_once()
 
 
+async def test_send_event_propagator_failure_falls_back_to_root_span() -> None:
+    module = _fresh_otel_handler_module()
+    tracer = MagicMock()
+    span_cm = MagicMock()
+    span = MagicMock()
+    span_cm.__enter__ = MagicMock(return_value=span)
+    span_cm.__exit__ = MagicMock(return_value=False)
+    tracer.start_as_current_span = MagicMock(return_value=span_cm)
+
+    failing_propagator = MagicMock(side_effect=RuntimeError("propagator broken"))
+
+    with (
+        patch.object(module, "_otel_available", True),
+        patch.object(module, "TraceContextTextMapPropagator", failing_propagator),
+    ):
+        handler = module.OtelHandler(
+            config=SimpleNamespace(
+                otel_service_name="svc",
+                otel_exporter_endpoint=None,
+                otel_resource_attributes={},
+            )
+        )
+        handler._tracer = tracer
+        event = SimpleNamespace(
+            event_type="penetration_attempt",
+            ip_address="1.2.3.4",
+            action_taken="blocked",
+            reason="",
+            endpoint="",
+            method="",
+            status_code=0,
+            metadata={"traceparent": "00-abc-def-01"},
+        )
+        await handler.send_event(event)
+
+    tracer.start_as_current_span.assert_called_once()
+    sas_kwargs = tracer.start_as_current_span.call_args.kwargs
+    assert sas_kwargs.get("context") is None
+
+
 async def test_send_event_forwards_tracestate_when_present() -> None:
     module = _fresh_otel_handler_module()
     propagator = MagicMock()

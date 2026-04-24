@@ -292,8 +292,7 @@ def test_process_usage_rules_skips_return_pattern_rules(
         threshold=5,
         pattern="status:404",
     )
-    config = RouteConfig()
-    config.behavior_rules = [rule]
-    processor.process_usage_rules(mock_request, "1.2.3.4", config)
+    route_config = create_route_config_with_rules([rule])
+    processor.process_usage_rules(mock_request, "1.2.3.4", route_config)
     tracker = processor.context.guard_decorator.behavior_tracker
     tracker.track_endpoint_usage.assert_not_called()

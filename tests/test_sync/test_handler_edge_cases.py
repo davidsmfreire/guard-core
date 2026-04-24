@@ -410,7 +410,19 @@ def test_responses_factory_cors_applies_headers() -> None:
     assert "Access-Control-Allow-Origin" in result.headers
 
 
+def test_get_cloud_provider_details_skips_provider_not_in_ranges() -> None:
+    # Line 229-230 branch: provider NOT in self.ip_ranges, loop continues.
+    from guard_core.sync.handlers.cloud_handler import CloudManager
+
+    CloudManager._instance = None
+    mgr = CloudManager()
+    mgr.ip_ranges = {"AWS": set()}  # only AWS in ranges
+    result = mgr.get_cloud_provider_details("1.2.3.4", providers={"AWS", "Unknown"})
+    assert result is None
+
+
 def test_ipban_manager_returns_existing_singleton() -> None:
+    # Covers the __new__ False branch (instance already exists).
     from guard_core.sync.handlers.ipban_handler import IPBanManager
 
     first = IPBanManager()
@@ -419,6 +431,7 @@ def test_ipban_manager_returns_existing_singleton() -> None:
 
 
 def test_is_ip_banned_not_in_memory_and_no_redis() -> None:
+    # 102->111 False, then 113-115 with no redis_handler, returns False.
     from guard_core.sync.handlers.ipban_handler import IPBanManager
 
     manager = IPBanManager()
@@ -449,13 +462,47 @@ def test_is_ip_banned_redis_stale_expiry_cleanup() -> None:
     manager = IPBanManager()
     manager.banned_ips.clear()
     manager.redis_handler = MagicMock()
+    # expiry in the past
     manager.redis_handler.get_key = MagicMock(return_value=str(time.time() - 3600))
     manager.redis_handler.delete = MagicMock()
     assert manager.is_ip_banned("stale.ip") is False
     manager.redis_handler.delete.assert_called()
 
 
+def test_fetch_gcp_ignores_prefixes_lacking_both_ipv4_and_ipv6() -> None:
+    # Covers elif-False: loop continues over a prefix dict with neither key.
+    from unittest.mock import MagicMock, patch
+
+    from guard_core.sync.handlers.cloud_handler import fetch_gcp_ip_ranges
+
+    class _FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return None
+
+        def get(self, *_a, **_kw):
+            response = MagicMock()
+            response.raise_for_status = MagicMock()
+            response.json = MagicMock(
+                return_value={
+                    "prefixes": [
+                        {"other_key": "value"},
+                        {"ipv4Prefix": "10.0.0.0/8"},
+                    ]
+                }
+            )
+            return response
+
+    with patch("guard_core.sync.handlers.cloud_handler.requests.Session", _FakeSession):
+        result = fetch_gcp_ip_ranges()
+
+    assert len(result) == 1
+
+
 def test_ipban_reset_noop_when_no_redis_handler() -> None:
+    # reset() with redis_handler=None: `if self.redis_handler:` False, exit.
     from guard_core.sync.handlers.ipban_handler import IPBanManager
 
     manager = IPBanManager()
@@ -463,41 +510,3 @@ def test_ipban_reset_noop_when_no_redis_handler() -> None:
     manager.redis_handler = None
     manager.reset()
     assert len(manager.banned_ips) == 0
-
-
-def test_fetch_gcp_ignores_prefixes_lacking_both_ipv4_and_ipv6() -> None:
-    from unittest.mock import MagicMock, patch
-
-    from guard_core.sync.handlers.cloud_handler import fetch_gcp_ip_ranges
-
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json = MagicMock(
-        return_value={
-            "prefixes": [
-                {"other_key": "value"},
-                {"ipv4Prefix": "10.0.0.0/8"},
-            ]
-        }
-    )
-    mock_session = MagicMock()
-    mock_session.__enter__ = MagicMock(return_value=mock_session)
-    mock_session.__exit__ = MagicMock(return_value=False)
-    mock_session.get = MagicMock(return_value=mock_response)
-    with patch(
-        "guard_core.sync.handlers.cloud_handler.requests.Session",
-        return_value=mock_session,
-    ):
-        result = fetch_gcp_ip_ranges()
-
-    assert len(result) == 1
-
-
-def test_get_cloud_provider_details_skips_provider_not_in_ranges() -> None:
-    from guard_core.sync.handlers.cloud_handler import CloudManager
-
-    CloudManager._instance = None
-    mgr = CloudManager()
-    mgr.ip_ranges = {"AWS": set()}
-    result = mgr.get_cloud_provider_details("1.2.3.4", providers={"AWS", "Unknown"})
-    assert result is None

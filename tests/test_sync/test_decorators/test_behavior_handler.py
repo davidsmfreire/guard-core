@@ -535,10 +535,13 @@ def test_log_passive_mode_action_unknown_action_is_noop(caplog) -> None:
     from guard_core.sync.handlers.behavior_handler import BehaviorRule, BehaviorTracker
 
     tracker = BehaviorTracker(SecurityConfig())
+    # Construct rule with an action value outside the Literal — Literal isn't
+    # enforced at runtime, so the elif-chain falls through with no matching branch.
     rule = BehaviorRule(rule_type="usage", threshold=1, action="log")
     rule.action = "unknown"  # type: ignore[assignment]
     with caplog.at_level(logging.INFO):
         tracker._log_passive_mode_action(rule, "1.2.3.4", "details")
+    # Nothing matched; no warnings or criticals for this rule.
     unknown_logs = [r for r in caplog.records if "details" in r.getMessage()]
     assert not unknown_logs
 

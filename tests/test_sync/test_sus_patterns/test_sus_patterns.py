@@ -776,11 +776,14 @@ def test_sensitive_pattern_no_false_positives(path: str) -> None:
 
 
 def test_send_threat_event_with_no_patterns_uses_unknown_label() -> None:
+    # Defensive path: detect() only calls this when is_threat=True, which implies
+    # either matched_patterns or semantic_threats is non-empty. Invoke directly
+    # with both empty to exercise the "unknown" fallback branch.
     from guard_core.sync.handlers.suspatterns_handler import SusPatternsManager
 
     SusPatternsManager._instance = None
     mgr = SusPatternsManager()
-    mgr.agent_handler = None
+    mgr.agent_handler = None  # skip event dispatch
     mgr._send_threat_event(
         matched_patterns=[],
         semantic_threats=[],
@@ -807,7 +810,7 @@ def test_add_custom_pattern_writes_to_redis_when_configured() -> None:
     redis_handler.set_key = MagicMock()
     mgr.redis_handler = redis_handler
 
-    mgr.add_pattern(r"custom_test_redis_add_sync", custom=True)
+    mgr.add_pattern(r"custom_test_redis_add", custom=True)
     redis_handler.set_key.assert_called()
 
 
@@ -818,13 +821,13 @@ def test_remove_custom_pattern_writes_to_redis_when_configured() -> None:
 
     SusPatternsManager._instance = None
     mgr = SusPatternsManager()
-    mgr.add_pattern(r"custom_test_redis_remove_sync", custom=True)
+    mgr.add_pattern(r"custom_test_redis_remove", custom=True)
 
     redis_handler = MagicMock()
     redis_handler.set_key = MagicMock()
     mgr.redis_handler = redis_handler
 
-    assert mgr._remove_custom_pattern(r"custom_test_redis_remove_sync") is True
+    assert mgr._remove_custom_pattern(r"custom_test_redis_remove") is True
     redis_handler.set_key.assert_called()
 
 
@@ -848,11 +851,11 @@ def test_initialize_redis_skips_patterns_already_in_custom() -> None:
 
     SusPatternsManager._instance = None
     mgr = SusPatternsManager()
-    mgr.custom_patterns.add("existing_pattern_sync")
+    mgr.custom_patterns.add("existing_pattern")
     redis_handler = MagicMock()
-    redis_handler.get_key = MagicMock(return_value="existing_pattern_sync")
+    redis_handler.get_key = MagicMock(return_value="existing_pattern")
     mgr.initialize_redis(redis_handler)
-    assert "existing_pattern_sync" in mgr.custom_patterns
+    assert "existing_pattern" in mgr.custom_patterns
 
 
 def test_detect_pattern_match_with_unknown_threat_type_returns_unknown() -> None:
@@ -870,9 +873,7 @@ def test_detect_pattern_match_with_unknown_threat_type_returns_unknown() -> None
     assert label == "unknown"
 
 
-def test_detect_pattern_match_is_threat_but_threats_list_empty_returns_unknown() -> (
-    None
-):
+def test_detect_pattern_match_empty_threats_list_returns_unknown() -> None:
     from unittest.mock import MagicMock
 
     from guard_core.sync.handlers.suspatterns_handler import SusPatternsManager

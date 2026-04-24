@@ -93,7 +93,9 @@ def test_start_configures_logfire(config: MagicMock) -> None:
         mock_lf.configure.assert_called_once_with(service_name="guard-core-test")
 
 
-def test_flush_buffer_and_initialize_redis_and_stop_noop(config: MagicMock) -> None:
+def test_flush_buffer_and_initialize_redis_and_stop_noop(
+    config: MagicMock,
+) -> None:
     handler = LogfireHandler(config)
     handler.flush_buffer()
     handler.initialize_redis(MagicMock())
@@ -121,8 +123,9 @@ def test_import_error_branch() -> None:
             mod = importlib.import_module(module_name)
             assert mod._logfire_available is False
     finally:
-        if module_name in sys.modules:
-            del sys.modules[module_name]
-        sys.modules[module_name] = (
-            original if original else importlib.import_module(module_name)
-        )
+        sys.modules.pop(module_name, None)
+        if original is not None:
+            sys.modules[module_name] = original
+            importlib.reload(original)
+        else:
+            importlib.import_module(module_name)

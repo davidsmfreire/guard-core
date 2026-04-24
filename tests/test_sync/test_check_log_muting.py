@@ -19,7 +19,7 @@ def _make_request() -> MagicMock:
 def test_log_activity_emits_when_check_not_muted(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    logger = logging.getLogger("guard_core.sync.test.check_not_muted")
+    logger = logging.getLogger("guard_core.test.check_not_muted")
     with caplog.at_level(logging.WARNING, logger=logger.name):
         log_activity(
             _make_request(),
@@ -34,7 +34,7 @@ def test_log_activity_emits_when_check_not_muted(
 def test_log_activity_skips_when_check_muted(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    logger = logging.getLogger("guard_core.sync.test.check_muted")
+    logger = logging.getLogger("guard_core.test.check_muted")
     with caplog.at_level(logging.WARNING, logger=logger.name):
         log_activity(
             _make_request(),
@@ -49,7 +49,7 @@ def test_log_activity_skips_when_check_muted(
 def test_log_activity_no_check_name_never_mutes(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    logger = logging.getLogger("guard_core.sync.test.no_check_name")
+    logger = logging.getLogger("guard_core.test.no_check_name")
     with caplog.at_level(logging.WARNING, logger=logger.name):
         log_activity(
             _make_request(),
@@ -75,7 +75,7 @@ def test_security_check_log_if_allowed_respects_config(
 
     middleware = MagicMock()
     middleware.config = SecurityConfig(muted_check_logs={"suspicious_activity"})
-    middleware.logger = logging.getLogger("guard_core.sync.test.muted_check")
+    middleware.logger = logging.getLogger("guard_core.test.muted_check")
     check = _Check(middleware)
 
     with caplog.at_level(logging.WARNING, logger=middleware.logger.name):
@@ -103,7 +103,7 @@ def test_security_check_log_if_allowed_emits_when_not_muted(
 
     middleware = MagicMock()
     middleware.config = SecurityConfig(muted_check_logs={"rate_limit"})
-    middleware.logger = logging.getLogger("guard_core.sync.test.unmuted_check")
+    middleware.logger = logging.getLogger("guard_core.test.unmuted_check")
     check = _Check(middleware)
 
     with caplog.at_level(logging.WARNING, logger=middleware.logger.name):

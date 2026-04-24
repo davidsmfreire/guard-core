@@ -366,6 +366,7 @@ def test_initialize_redis_noop_when_redis_disabled() -> None:
     redis_handler = MagicMock()
     manager.initialize_redis(redis_handler)
     assert manager.redis_handler is redis_handler
+    # script_sha not loaded because enable_redis was False.
 
 
 def test_reset_noop_when_redis_keys_missing() -> None:
