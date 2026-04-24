@@ -43,6 +43,10 @@ class HandlerInitializer:
         behavior_tracker: Any = None
         if self.guard_decorator is not None:
             behavior_tracker = getattr(self.guard_decorator, "behavior_tracker", None)
+        if behavior_tracker is None:
+            from guard_core.sync.handlers.behavior_handler import BehaviorTracker
+
+            behavior_tracker = BehaviorTracker(self.config)
 
         context = EnrichmentContext(
             config=self.config,
