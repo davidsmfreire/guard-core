@@ -216,11 +216,15 @@ def test_start_configures_otel(config: MagicMock) -> None:
             patch("guard_core.sync.core.events.otel_handler.Resource") as MockResource,
             patch("guard_core.sync.core.events.otel_handler.TracerProvider") as MockTP,
             patch("guard_core.sync.core.events.otel_handler.BatchSpanProcessor"),
-            patch("guard_core.sync.core.events.otel_handler.OTLPSpanExporter"),
+            patch(
+                "guard_core.sync.core.events.otel_handler.OTLPSpanExporter"
+            ) as MockSpanExporter,
             patch(
                 "guard_core.sync.core.events.otel_handler.PeriodicExportingMetricReader"
             ),
-            patch("guard_core.sync.core.events.otel_handler.OTLPMetricExporter"),
+            patch(
+                "guard_core.sync.core.events.otel_handler.OTLPMetricExporter"
+            ) as MockMetricExporter,
             patch("guard_core.sync.core.events.otel_handler.MeterProvider") as MockMP,
         ):
             mock_tp = MagicMock()
@@ -238,11 +242,131 @@ def test_start_configures_otel(config: MagicMock) -> None:
             MockMP.assert_called_once()
             mock_metrics.set_meter_provider.assert_called_once_with(mock_mp)
             mock_metrics.get_meter.assert_called_once_with("guard_core.otel")
+            MockSpanExporter.assert_called_once_with(
+                endpoint="http://localhost:4318/v1/traces"
+            )
+            MockMetricExporter.assert_called_once_with(
+                endpoint="http://localhost:4318/v1/metrics"
+            )
             assert handler._tracer is mock_tracer
             assert handler._meter is mock_meter
             assert handler._rt_histogram is mock_histogram
             assert handler._request_counter is mock_counter
             assert handler._error_counter is mock_error_counter
+
+
+def test_start_preserves_explicit_v1_path_endpoint() -> None:
+    cfg = MagicMock(
+        otel_service_name="guard-core-test",
+        otel_exporter_endpoint="http://collector.internal:4318/v1/traces",
+    )
+    with (
+        patch("guard_core.sync.core.events.otel_handler._otel_available", True),
+        patch("guard_core.sync.core.events.otel_handler.trace"),
+        patch("guard_core.sync.core.events.otel_handler.metrics"),
+        patch("guard_core.sync.core.events.otel_handler.Resource"),
+        patch("guard_core.sync.core.events.otel_handler.TracerProvider"),
+        patch("guard_core.sync.core.events.otel_handler.BatchSpanProcessor"),
+        patch(
+            "guard_core.sync.core.events.otel_handler.OTLPSpanExporter"
+        ) as MockSpanExporter,
+        patch("guard_core.sync.core.events.otel_handler.PeriodicExportingMetricReader"),
+        patch(
+            "guard_core.sync.core.events.otel_handler.OTLPMetricExporter"
+        ) as MockMetricExporter,
+        patch("guard_core.sync.core.events.otel_handler.MeterProvider"),
+    ):
+        handler = OtelHandler(cfg)
+        handler.start()
+        MockSpanExporter.assert_called_once_with(
+            endpoint="http://collector.internal:4318/v1/traces"
+        )
+        MockMetricExporter.assert_called_once_with(
+            endpoint="http://collector.internal:4318/v1/traces"
+        )
+
+
+def test_start_handles_none_endpoint() -> None:
+    cfg = MagicMock(
+        otel_service_name="guard-core-test",
+        otel_exporter_endpoint=None,
+    )
+    with (
+        patch("guard_core.sync.core.events.otel_handler._otel_available", True),
+        patch("guard_core.sync.core.events.otel_handler.trace"),
+        patch("guard_core.sync.core.events.otel_handler.metrics"),
+        patch("guard_core.sync.core.events.otel_handler.Resource"),
+        patch("guard_core.sync.core.events.otel_handler.TracerProvider"),
+        patch("guard_core.sync.core.events.otel_handler.BatchSpanProcessor"),
+        patch(
+            "guard_core.sync.core.events.otel_handler.OTLPSpanExporter"
+        ) as MockSpanExporter,
+        patch("guard_core.sync.core.events.otel_handler.PeriodicExportingMetricReader"),
+        patch(
+            "guard_core.sync.core.events.otel_handler.OTLPMetricExporter"
+        ) as MockMetricExporter,
+        patch("guard_core.sync.core.events.otel_handler.MeterProvider"),
+    ):
+        handler = OtelHandler(cfg)
+        handler.start()
+        MockSpanExporter.assert_called_once_with(endpoint=None)
+        MockMetricExporter.assert_called_once_with(endpoint=None)
+
+
+def test_start_strips_trailing_slash_from_endpoint() -> None:
+    cfg = MagicMock(
+        otel_service_name="guard-core-test",
+        otel_exporter_endpoint="http://jaeger:4318/",
+    )
+    with (
+        patch("guard_core.sync.core.events.otel_handler._otel_available", True),
+        patch("guard_core.sync.core.events.otel_handler.trace"),
+        patch("guard_core.sync.core.events.otel_handler.metrics"),
+        patch("guard_core.sync.core.events.otel_handler.Resource"),
+        patch("guard_core.sync.core.events.otel_handler.TracerProvider"),
+        patch("guard_core.sync.core.events.otel_handler.BatchSpanProcessor"),
+        patch(
+            "guard_core.sync.core.events.otel_handler.OTLPSpanExporter"
+        ) as MockSpanExporter,
+        patch("guard_core.sync.core.events.otel_handler.PeriodicExportingMetricReader"),
+        patch(
+            "guard_core.sync.core.events.otel_handler.OTLPMetricExporter"
+        ) as MockMetricExporter,
+        patch("guard_core.sync.core.events.otel_handler.MeterProvider"),
+    ):
+        handler = OtelHandler(cfg)
+        handler.start()
+        MockSpanExporter.assert_called_once_with(
+            endpoint="http://jaeger:4318/v1/traces"
+        )
+        MockMetricExporter.assert_called_once_with(
+            endpoint="http://jaeger:4318/v1/metrics"
+        )
+
+
+def test_otlp_signal_endpoint_returns_none_when_endpoint_none() -> None:
+    assert OtelHandler._otlp_signal_endpoint(None, "/v1/traces") is None
+
+
+def test_otlp_signal_endpoint_appends_signal_path_when_missing() -> None:
+    assert (
+        OtelHandler._otlp_signal_endpoint("http://host:4318", "/v1/traces")
+        == "http://host:4318/v1/traces"
+    )
+
+
+def test_otlp_signal_endpoint_leaves_explicit_path_alone() -> None:
+    assert (
+        OtelHandler._otlp_signal_endpoint("http://host:4318/v1/metrics", "/v1/traces")
+        == "http://host:4318/v1/metrics"
+    )
+
+
+def test_otlp_signal_endpoint_strips_trailing_slash() -> None:
+    assert (
+        OtelHandler._otlp_signal_endpoint("http://host:4318/", "/v1/traces")
+        == "http://host:4318/v1/traces"
+    )
 
 
 def test_import_error_branch() -> None:

@@ -64,11 +64,17 @@ class OtelHandler:
         attrs.update(extra)
         resource = Resource.create(attrs)
         endpoint = self._config.otel_exporter_endpoint
+        traces_endpoint = self._otlp_signal_endpoint(endpoint, "/v1/traces")
+        metrics_endpoint = self._otlp_signal_endpoint(endpoint, "/v1/metrics")
         tp = TracerProvider(resource=resource)
-        tp.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
+        tp.add_span_processor(
+            BatchSpanProcessor(OTLPSpanExporter(endpoint=traces_endpoint))
+        )
         trace.set_tracer_provider(tp)
         self._tracer = trace.get_tracer("guard_core.otel")
-        reader = PeriodicExportingMetricReader(OTLPMetricExporter(endpoint=endpoint))
+        reader = PeriodicExportingMetricReader(
+            OTLPMetricExporter(endpoint=metrics_endpoint)
+        )
         mp = MeterProvider(resource=resource, metric_readers=[reader])
         metrics.set_meter_provider(mp)
         self._meter = metrics.get_meter("guard_core.otel")
@@ -102,6 +108,14 @@ class OtelHandler:
         ) as span:
             self._apply_event_attributes(span, event, event_type)
             self._forward_enrichment_metadata(span, metadata)
+
+    @staticmethod
+    def _otlp_signal_endpoint(endpoint: str | None, signal_path: str) -> str | None:
+        if endpoint is None:
+            return None
+        if "/v1/" in endpoint:
+            return endpoint
+        return endpoint.rstrip("/") + signal_path
 
     def _extract_parent_context(self, metadata: Any) -> Any:
         if not isinstance(metadata, dict):
