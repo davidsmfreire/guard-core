@@ -48,24 +48,35 @@ class DynamicRuleManager:
         rules = self.current_rules
         if rules is None:
             return None
-        ip = getattr(event, "ip_address", None)
-        if ip and (
-            ip in (rules.ip_blacklist or []) or ip in (rules.ip_whitelist or [])
+        if (
+            self._event_matches_ip(event, rules)
+            or self._event_matches_country(event, rules)
+            or self._event_matches_type(event, rules)
         ):
-            return rules.rule_id, rules.version
-        country = getattr(event, "country", None)
-        if country and country in (rules.blocked_countries or []):
-            return rules.rule_id, rules.version
-        event_type = getattr(event, "event_type", None)
-        if event_type == "rate_limited" and (
-            rules.global_rate_limit is not None or bool(rules.endpoint_rate_limits)
-        ):
-            return rules.rule_id, rules.version
-        if event_type == "cloud_blocked" and rules.blocked_cloud_providers:
-            return rules.rule_id, rules.version
-        if event_type == "user_agent_blocked" and rules.blocked_user_agents:
             return rules.rule_id, rules.version
         return None
+
+    def _event_matches_ip(self, event: Any, rules: DynamicRules) -> bool:
+        ip = getattr(event, "ip_address", None)
+        if not ip:
+            return False
+        return ip in (rules.ip_blacklist or []) or ip in (rules.ip_whitelist or [])
+
+    def _event_matches_country(self, event: Any, rules: DynamicRules) -> bool:
+        country = getattr(event, "country", None)
+        return bool(country and country in (rules.blocked_countries or []))
+
+    def _event_matches_type(self, event: Any, rules: DynamicRules) -> bool:
+        event_type = getattr(event, "event_type", None)
+        if event_type == "rate_limited":
+            return rules.global_rate_limit is not None or bool(
+                rules.endpoint_rate_limits
+            )
+        if event_type == "cloud_blocked":
+            return bool(rules.blocked_cloud_providers)
+        if event_type == "user_agent_blocked":
+            return bool(rules.blocked_user_agents)
+        return False
 
     def _rule_update_loop(self) -> None:
         while True:

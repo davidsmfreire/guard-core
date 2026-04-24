@@ -35,9 +35,10 @@ async def test_logfire_send_event_forwards_enrichment_metadata() -> None:
             "traceparent": "should-be-excluded",
         },
     )
-    with patch(
-        "guard_core.core.events.logfire_handler._logfire_available", True
-    ), patch("guard_core.core.events.logfire_handler.logfire") as mock_logfire:
+    with (
+        patch("guard_core.core.events.logfire_handler._logfire_available", True),
+        patch("guard_core.core.events.logfire_handler.logfire") as mock_logfire,
+    ):
         mock_span = MagicMock()
         mock_span.__enter__ = MagicMock(return_value=None)
         mock_span.__exit__ = MagicMock(return_value=False)
@@ -67,9 +68,10 @@ async def test_logfire_send_event_without_metadata_does_not_crash() -> None:
         method="",
         status_code=0,
     )
-    with patch(
-        "guard_core.core.events.logfire_handler._logfire_available", True
-    ), patch("guard_core.core.events.logfire_handler.logfire") as mock_logfire:
+    with (
+        patch("guard_core.core.events.logfire_handler._logfire_available", True),
+        patch("guard_core.core.events.logfire_handler.logfire") as mock_logfire,
+    ):
         mock_span = MagicMock()
         mock_span.__enter__ = MagicMock(return_value=None)
         mock_span.__exit__ = MagicMock(return_value=False)
@@ -115,9 +117,10 @@ async def test_enricher_to_logfire_end_to_end_through_handler() -> None:
     )
     await enricher.enrich_event(event)
 
-    with patch(
-        "guard_core.core.events.logfire_handler._logfire_available", True
-    ), patch("guard_core.core.events.logfire_handler.logfire") as mock_logfire:
+    with (
+        patch("guard_core.core.events.logfire_handler._logfire_available", True),
+        patch("guard_core.core.events.logfire_handler.logfire") as mock_logfire,
+    ):
         mock_span = MagicMock()
         mock_span.__enter__ = MagicMock(return_value=None)
         mock_span.__exit__ = MagicMock(return_value=False)

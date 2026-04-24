@@ -37,6 +37,15 @@ except ImportError:
     _otel_available = False
 
 
+_EVENT_SPAN_ATTRS: tuple[tuple[str, str], ...] = (
+    ("guard.ip_address", "ip_address"),
+    ("guard.action_taken", "action_taken"),
+    ("guard.reason", "reason"),
+    ("guard.endpoint", "endpoint"),
+    ("guard.method", "method"),
+)
+
+
 class OtelHandler:
     def __init__(self, config: Any) -> None:
         self._config = config
@@ -86,41 +95,47 @@ class OtelHandler:
             return
         event_type = getattr(event, "event_type", "unknown")
         metadata = getattr(event, "metadata", {}) or {}
-        traceparent = (
-            metadata.get("traceparent") if isinstance(metadata, dict) else None
-        )
-        tracestate = metadata.get("tracestate") if isinstance(metadata, dict) else None
-        parent_ctx = None
-        if traceparent:
-            carrier: dict[str, str] = {"traceparent": traceparent}
-            if tracestate:
-                carrier["tracestate"] = tracestate
-            try:
-                propagator = TraceContextTextMapPropagator()
-                parent_ctx = propagator.extract(carrier=carrier)
-            except Exception:
-                parent_ctx = None
+        parent_ctx = self._extract_parent_context(metadata)
 
         with self._tracer.start_as_current_span(
             f"guard.event.{event_type}", context=parent_ctx
         ) as span:
-            span.set_attribute("guard.event_type", event_type)
-            span.set_attribute("guard.ip_address", getattr(event, "ip_address", ""))
-            span.set_attribute("guard.action_taken", getattr(event, "action_taken", ""))
-            span.set_attribute("guard.reason", getattr(event, "reason", ""))
-            span.set_attribute("guard.endpoint", getattr(event, "endpoint", ""))
-            span.set_attribute("guard.method", getattr(event, "method", ""))
-            status_code = getattr(event, "status_code", 0)
-            if status_code:
-                span.set_attribute("guard.status_code", status_code)
-            if isinstance(metadata, dict):
-                for key, value in metadata.items():
-                    if (
-                        key.startswith("guard.")
-                        and key not in ("traceparent", "tracestate")
-                        and value is not None
-                    ):
-                        span.set_attribute(key, value)
+            self._apply_event_attributes(span, event, event_type)
+            self._forward_enrichment_metadata(span, metadata)
+
+    def _extract_parent_context(self, metadata: Any) -> Any:
+        if not isinstance(metadata, dict):
+            return None
+        traceparent = metadata.get("traceparent")
+        if not traceparent:
+            return None
+        carrier: dict[str, str] = {"traceparent": traceparent}
+        tracestate = metadata.get("tracestate")
+        if tracestate:
+            carrier["tracestate"] = tracestate
+        try:
+            return TraceContextTextMapPropagator().extract(carrier=carrier)
+        except Exception:
+            return None
+
+    def _apply_event_attributes(self, span: Any, event: Any, event_type: str) -> None:
+        span.set_attribute("guard.event_type", event_type)
+        for attr_key, event_attr in _EVENT_SPAN_ATTRS:
+            span.set_attribute(attr_key, getattr(event, event_attr, ""))
+        status_code = getattr(event, "status_code", 0)
+        if status_code:
+            span.set_attribute("guard.status_code", status_code)
+
+    def _forward_enrichment_metadata(self, span: Any, metadata: Any) -> None:
+        if not isinstance(metadata, dict):
+            return
+        for key, value in metadata.items():
+            if (
+                key.startswith("guard.")
+                and key not in ("traceparent", "tracestate")
+                and value is not None
+            ):
+                span.set_attribute(key, value)
 
     def send_metric(self, metric: Any) -> None:
         if not _otel_available or not self._meter:
