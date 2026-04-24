@@ -111,11 +111,14 @@ class OtelHandler:
 
     @staticmethod
     def _otlp_signal_endpoint(endpoint: str | None, signal_path: str) -> str | None:
-        if endpoint is None:
+        if not endpoint:
             return None
-        if "/v1/" in endpoint:
-            return endpoint
-        return endpoint.rstrip("/") + signal_path
+        base = endpoint.rstrip("/")
+        for known_signal in ("/v1/traces", "/v1/metrics", "/v1/logs"):
+            if base.endswith(known_signal):
+                base = base[: -len(known_signal)]
+                break
+        return base + signal_path
 
     def _extract_parent_context(self, metadata: Any) -> Any:
         if not isinstance(metadata, dict):
