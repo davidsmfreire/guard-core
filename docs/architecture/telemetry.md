@@ -185,7 +185,12 @@ When none matches, the two keys stay absent.
 
 ### Behavioural correlation
 
-`guard.behavior.correlation_key` is `sha256(f"{ip}|{service}|{floor(now/300)}").hexdigest()[:16]` — a stable 16-character hex identifier that groups multiple events from the same IP within a 5-minute rolling window. Dashboards that want to surface "attack chains" can group events by this key.
+`guard.behavior.correlation_key` is a stable 16-character hex identifier that groups multiple events from the same IP within a 5-minute rolling window. Dashboards that want to surface "attack chains" can group events by this key. The formula is:
+
+```python
+sha256(f"{ip}|{service}|{floor(now/300)}".encode()).hexdigest()[:16]
+```
+
 
 `guard.behavior.recent_event_count` is the count of timestamps recorded by `BehaviorTracker` for the same IP across all endpoints in the last 5 minutes. Purely in-memory — a high count is signal that this IP is active, not a definitive threat, but useful for prioritising review.
 

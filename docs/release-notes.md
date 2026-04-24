@@ -16,7 +16,7 @@ v1.2.0 (2026-04-24)
 Enriched telemetry: client-side EventEnricher gated on guard-agent (v1.2.0)
 --------------------------------------------------------------------------
 
-**Highlights**
+### Highlights
 
 - **Two-tier telemetry model.** Raw OTel/Logfire signal stays free and unchanged. A new **enriched** tier — gated on `enable_agent=True` + `enable_enrichment=True` — adds project identity, deterministic threat scores, dynamic-rule correlation, and per-IP behavioural correlation to every event and metric the composite fans out. Every exporter (guard-agent, OTel, Logfire) sees the same enriched payload.
 - **`EventEnricher`.** New `guard_core.core.events.enricher.EventEnricher` + `EnrichmentContext` run inside `CompositeAgentHandler.send_event` / `.send_metric` between the mute filter and fan-out. Four independent strategies, each fails soft — a faulty strategy never blocks emission. Async + sync mirror parity maintained via `scripts/unasync.py`.
@@ -27,7 +27,7 @@ Enriched telemetry: client-side EventEnricher gated on guard-agent (v1.2.0)
 - **OTel + Logfire forward `guard.*` metadata as span attributes.** `OtelHandler.send_event` and `LogfireHandler.send_event` now walk `event.metadata` and attach every `guard.*` key (except `traceparent` / `tracestate`, which are still used for parent-context extraction only).
 - **100% line + branch coverage.** 2751 tests passing, zero skips, zero `# pragma: no cover`.
 
-**Added**
+### Added
 
 - `guard_core.core.events.enricher.EventEnricher` + `EnrichmentContext` dataclass (sync mirror under `guard_core/sync/`).
 - `guard_core.core.events.enricher.ThreatScorer.score_for(event_type)` + deterministic `_THREAT_SCORE_MAP`.
@@ -39,11 +39,11 @@ Enriched telemetry: client-side EventEnricher gated on guard-agent (v1.2.0)
 - `BehaviorTracker.get_recent_event_count(ip, window_seconds) -> int` aggregating usage counts across all endpoints for the given IP.
 - `OtelHandler.send_event` + `LogfireHandler.send_event` forward `guard.*` metadata keys as span attributes.
 
-**Docs**
+### Docs
 
 - `docs/architecture/telemetry.md` updated with: the two-tier model table, the new `enable_enrichment` config field, an enrichment-fields reference table, a dedicated "Enabling enrichment" section, documentation of dynamic-rule correlation matching, and documentation of the behavioural correlation key algorithm.
 
-**Compat notes**
+### Compat notes
 
 - All new fields / layers are strictly additive. Existing configurations with `enable_otel=True` and/or `enable_logfire=True` continue to emit raw signal unchanged.
 - Adapters built against 1.1.0 continue to work against 1.2.0 without code changes — the enricher only activates when `enable_enrichment=True`, and that flag is False by default.
