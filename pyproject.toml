@@ -153,6 +153,16 @@ ignore_missing_imports = true
 module = "guard_core.sync.*"
 disable_error_code = ["arg-type", "return-value", "assignment"]
 
+[[tool.mypy.overrides]]
+module = "opentelemetry.*"
+follow_imports = "skip"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "logfire"
+follow_imports = "skip"
+ignore_missing_imports = true
+
 [tool.pymarkdown.plugins.md003]
 enabled = false
 
@@ -274,3 +284,7 @@ per_rule_ignores = { "DEP002" = [
 ], "DEP003" = [
     "guard-agent",
 ] }
+
+[tool.deptry.package_module_name_map]
+opentelemetry-sdk = "opentelemetry"
+opentelemetry-exporter-otlp-proto-http = "opentelemetry"

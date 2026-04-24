@@ -26,14 +26,14 @@ try:
 except ImportError:
     metrics = None
     trace = None
-    OTLPMetricExporter = None  # type: ignore[misc]
-    OTLPSpanExporter = None  # type: ignore[misc]
-    MeterProvider = None  # type: ignore[misc]
-    PeriodicExportingMetricReader = None  # type: ignore[misc]
-    Resource = None  # type: ignore[misc]
-    TracerProvider = None  # type: ignore[misc]
-    BatchSpanProcessor = None  # type: ignore[misc]
-    TraceContextTextMapPropagator = None  # type: ignore[misc]
+    OTLPMetricExporter = None
+    OTLPSpanExporter = None
+    MeterProvider = None
+    PeriodicExportingMetricReader = None
+    Resource = None
+    TracerProvider = None
+    BatchSpanProcessor = None
+    TraceContextTextMapPropagator = None
     _otel_available = False
 
 

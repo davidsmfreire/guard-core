@@ -24,16 +24,16 @@ try:
 
     _otel_available = True
 except ImportError:
-    metrics = None  # type: ignore[assignment]
-    trace = None  # type: ignore[assignment]
-    OTLPMetricExporter = None  # type: ignore[assignment,misc]
-    OTLPSpanExporter = None  # type: ignore[assignment,misc]
-    MeterProvider = None  # type: ignore[assignment,misc]
-    PeriodicExportingMetricReader = None  # type: ignore[assignment,misc]
-    Resource = None  # type: ignore[assignment,misc]
-    TracerProvider = None  # type: ignore[assignment,misc]
-    BatchSpanProcessor = None  # type: ignore[assignment,misc]
-    TraceContextTextMapPropagator = None  # type: ignore[assignment,misc]
+    metrics = None
+    trace = None
+    OTLPMetricExporter = None
+    OTLPSpanExporter = None
+    MeterProvider = None
+    PeriodicExportingMetricReader = None
+    Resource = None
+    TracerProvider = None
+    BatchSpanProcessor = None
+    TraceContextTextMapPropagator = None
     _otel_available = False
 
 
