@@ -1,6 +1,6 @@
 <p align="center">
     <a href="https://rennf93.github.io/guard-core/latest/">
-        <img src="https://rennf93.github.io/guard-core/latest/assets/big_logo.svg" alt="Guard Core">
+        <img src="https://rennf93.github.io/guard-core/latest/assets/guard_core_legend.svg" alt="Guard Core">
     </a>
 </p>
 

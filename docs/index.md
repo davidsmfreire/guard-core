@@ -8,7 +8,7 @@ keywords: guard-core, security engine, python, protocol-based, adapter developme
 Guard Core
 ==========
 
-![Guard Core Logo](assets/big_logo.svg)
+![Guard Core Logo](assets/guard_core_legend.svg)
 
 [![PyPI version](https://badge.fury.io/py/guard-core.svg?cache=none&icon=si%3Apython&icon_color=%23008cb4)](https://badge.fury.io/py/guard-core)
 [![Release](https://github.com/rennf93/guard-core/actions/workflows/release.yml/badge.svg)](https://github.com/rennf93/guard-core/actions/workflows/release.yml)
