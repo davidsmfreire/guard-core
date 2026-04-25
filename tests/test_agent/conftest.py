@@ -148,7 +148,7 @@ def config() -> SecurityConfig:
 @pytest.fixture
 def mock_agent_handler() -> AsyncMock:
     handler = AsyncMock()
-    handler.get_dynamic_rules = AsyncMock()
+    handler.get_dynamic_rules = AsyncMock(return_value=None)
     handler.send_event = AsyncMock()
     return handler
 

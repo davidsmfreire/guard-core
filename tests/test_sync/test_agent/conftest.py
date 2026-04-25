@@ -149,7 +149,7 @@ def config() -> SecurityConfig:
 @pytest.fixture
 def mock_agent_handler() -> MagicMock:
     handler = MagicMock()
-    handler.get_dynamic_rules = MagicMock()
+    handler.get_dynamic_rules = MagicMock(return_value=None)
     handler.send_event = MagicMock()
     return handler
 

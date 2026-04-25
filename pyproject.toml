@@ -112,7 +112,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 asyncio_default_fixture_loop_scope = "function"
-addopts = "--cov=guard_core --cov-report=term-missing"
+addopts = "--cov=guard_core --cov-branch --cov-report=term-missing"
 markers = [
     "asyncio: mark tests as async"
 ]

@@ -239,13 +239,13 @@ serve-docs:
 
 .PHONY: lint-docs
 lint-docs:
-	@uv run pymarkdownlnt scan -r -e ./.venv -e ./.git -e ./.github -e ./data -e ./guard_core -e ./tests -e ./.claude -e ./CLAUDE.md -e ./.cursor -e ./.kiro -e ./ZZZ .
+	@uv run pymarkdownlnt scan -r -e ./.venv -e ./.git -e ./.github -e ./data -e ./guard_core -e ./tests -e ./.claude -e ./CLAUDE.md -e ./.cursor -e ./.kiro -e ./ZZZ -e ./docs/superpowers .
 	@find . | grep -E "(__pycache__|\\.pyc|\\.pyo|\\.pytest_cache|\\.ruff_cache|\\.mypy_cache)" | xargs rm -rf
 
 
 .PHONY: fix-docs
 fix-docs:
-	@uv run pymarkdownlnt fix -r -e ./.venv -e ./.git -e ./.github -e ./data -e ./guard_core -e ./tests -e ./.claude -e ./CLAUDE.md -e ./.cursor -e ./.kiro -e ./ZZZ .
+	@uv run pymarkdownlnt fix -r -e ./.venv -e ./.git -e ./.github -e ./data -e ./guard_core -e ./tests -e ./.claude -e ./CLAUDE.md -e ./.cursor -e ./.kiro -e ./ZZZ -e ./docs/superpowers .
 	@find . | grep -E "(__pycache__|\\.pyc|\\.pyo|\\.pytest_cache|\\.ruff_cache|\\.mypy_cache)" | xargs rm -rf
 
 

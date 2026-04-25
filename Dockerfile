@@ -20,7 +20,7 @@ RUN pip install uv
 
 COPY pyproject.toml uv.lock* README.md /app/
 
-RUN uv sync --extra dev --frozen
+RUN uv sync --extra dev --extra otel --extra logfire --frozen
 
 ENV PATH="/app/.venv/bin:$PATH"
 

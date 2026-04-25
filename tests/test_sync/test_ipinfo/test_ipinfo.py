@@ -444,3 +444,22 @@ def test_initialize_redis_delegates_to_initialize() -> None:
         mgr.initialize_redis(redis_handler)
     mock_init.assert_called_once()
     assert mgr.redis_handler is redis_handler
+
+
+def test_singleton_reuses_existing_instance_with_new_token() -> None:
+    from guard_core.sync.handlers.ipinfo_handler import IPInfoManager
+
+    IPInfoManager._instance = None
+    first = IPInfoManager(token="initial-token")
+    first_id = id(first)
+
+    second = IPInfoManager(token="updated-token", db_path=Path("/tmp/different.mmdb"))
+
+    assert id(second) == first_id
+    assert second.token == "updated-token"
+    assert second.db_path == Path("/tmp/different.mmdb")
+
+    third = IPInfoManager(token="third-token")
+    assert id(third) == first_id
+    assert third.token == "third-token"
+    IPInfoManager._instance = None
