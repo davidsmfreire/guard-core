@@ -1,6 +1,7 @@
 import ipaddress
 import time
 from collections import deque
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from guard_core.handlers.cloud_handler import CloudManager
@@ -9,7 +10,12 @@ from guard_core.handlers.ratelimit_handler import RateLimitManager
 from guard_core.handlers.redis_handler import RedisManager
 from guard_core.handlers.security_headers_handler import SecurityHeadersManager
 from guard_core.models import SecurityConfig
-from tests.conftest import MockGuardRequest, MockGuardResponse, MockGuardResponseFactory
+from tests.conftest import (
+    REDIS_URL,
+    MockGuardRequest,
+    MockGuardResponse,
+    MockGuardResponseFactory,
+)
 
 
 async def test_ipban_in_memory_expired() -> None:
@@ -65,7 +71,7 @@ async def test_cloud_handler_get_details_no_match() -> None:
 
 
 async def test_redis_delete_pattern_with_keys() -> None:
-    config = SecurityConfig(enable_redis=True, redis_url="redis://localhost:6379")
+    config = SecurityConfig(enable_redis=True, redis_url=REDIS_URL)
     mgr = RedisManager(config)
     await mgr.initialize()
     await mgr.set_key("test_dp", "key1", "value1")
@@ -278,8 +284,12 @@ async def test_utils_detect_penetration_header_match() -> None:
         call_count = 0
 
         async def side_effect(
-            value, context, component_name, client_ip, correlation_id
-        ):
+            value: str,
+            context: str,
+            component_name: str,
+            client_ip: str,
+            correlation_id: str,
+        ) -> tuple[bool, str]:
             nonlocal call_count
             call_count += 1
             if "header" in context and "X-Evil" in context:
@@ -468,13 +478,13 @@ async def test_fetch_gcp_ignores_prefixes_lacking_both_ipv4_and_ipv6() -> None:
     from guard_core.handlers.cloud_handler import fetch_gcp_ip_ranges
 
     class _FakeSession:
-        async def __aenter__(self):
+        async def __aenter__(self) -> "_FakeSession":
             return self
 
-        async def __aexit__(self, *_a):
+        async def __aexit__(self, *_a: Any) -> None:
             return None
 
-        async def get(self, *_a, **_kw):
+        async def get(self, *_a: Any, **_kw: Any) -> MagicMock:
             response = MagicMock()
             response.raise_for_status = MagicMock()
             response.json = AsyncMock(

@@ -1,6 +1,7 @@
 import ipaddress
 import time
 from collections import deque
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from guard_core.models import SecurityConfig
@@ -10,6 +11,7 @@ from guard_core.sync.handlers.ratelimit_handler import RateLimitManager
 from guard_core.sync.handlers.redis_handler import RedisManager
 from guard_core.sync.handlers.security_headers_handler import SecurityHeadersManager
 from tests.test_sync.conftest import (
+    REDIS_URL,
     MockGuardResponse,
     MockGuardResponseFactory,
     SyncMockGuardRequest,
@@ -69,7 +71,7 @@ def test_cloud_handler_get_details_no_match() -> None:
 
 
 def test_redis_delete_pattern_with_keys() -> None:
-    config = SecurityConfig(enable_redis=True, redis_url="redis://localhost:6379")
+    config = SecurityConfig(enable_redis=True, redis_url=REDIS_URL)
     mgr = RedisManager(config)
     mgr.initialize()
     mgr.set_key("test_dp", "key1", "value1")
@@ -278,7 +280,13 @@ def test_utils_detect_penetration_header_match() -> None:
     with patch("guard_core.sync.utils._check_request_component") as mock_check:
         call_count = 0
 
-        def side_effect(value, context, component_name, client_ip, correlation_id):
+        def side_effect(
+            value: str,
+            context: str,
+            component_name: str,
+            client_ip: str,
+            correlation_id: str,
+        ) -> tuple[bool, str]:
             nonlocal call_count
             call_count += 1
             if "header" in context and "X-Evil" in context:
@@ -476,13 +484,13 @@ def test_fetch_gcp_ignores_prefixes_lacking_both_ipv4_and_ipv6() -> None:
     from guard_core.sync.handlers.cloud_handler import fetch_gcp_ip_ranges
 
     class _FakeSession:
-        def __enter__(self):
+        def __enter__(self) -> "_FakeSession":
             return self
 
-        def __exit__(self, *_a):
+        def __exit__(self, *_a: Any) -> None:
             return None
 
-        def get(self, *_a, **_kw):
+        def get(self, *_a: Any, **_kw: Any) -> MagicMock:
             response = MagicMock()
             response.raise_for_status = MagicMock()
             response.json = MagicMock(

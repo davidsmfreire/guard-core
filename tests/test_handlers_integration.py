@@ -6,7 +6,7 @@ from guard_core.handlers.ipban_handler import IPBanManager
 from guard_core.handlers.ratelimit_handler import RateLimitManager
 from guard_core.handlers.security_headers_handler import SecurityHeadersManager
 from guard_core.models import SecurityConfig
-from tests.conftest import MockGuardRequest
+from tests.conftest import REDIS_URL, MockGuardRequest
 
 
 async def test_ipban_initialize_redis() -> None:
@@ -606,7 +606,7 @@ async def test_redis_handler_delete_pattern_disabled() -> None:
 async def test_redis_handler_keys_with_redis() -> None:
     from guard_core.handlers.redis_handler import RedisManager
 
-    config = SecurityConfig(enable_redis=True, redis_url="redis://localhost:6379")
+    config = SecurityConfig(enable_redis=True, redis_url=REDIS_URL)
     mgr = RedisManager(config)
     await mgr.initialize()
     result = await mgr.keys("nonexistent_pattern_xyz*")
@@ -618,7 +618,7 @@ async def test_redis_handler_keys_with_redis() -> None:
 async def test_redis_handler_delete_pattern_with_redis() -> None:
     from guard_core.handlers.redis_handler import RedisManager
 
-    config = SecurityConfig(enable_redis=True, redis_url="redis://localhost:6379")
+    config = SecurityConfig(enable_redis=True, redis_url=REDIS_URL)
     mgr = RedisManager(config)
     await mgr.initialize()
     result = await mgr.delete_pattern("nonexistent_pattern_xyz*")
