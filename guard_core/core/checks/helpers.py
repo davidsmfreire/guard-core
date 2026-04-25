@@ -4,6 +4,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from guard_core.decorators.base import RouteConfig
+from guard_core.detection_result import DetectionResult
 from guard_core.models import SecurityConfig
 from guard_core.protocols.request_protocol import GuardRequest
 from guard_core.utils import detect_penetration_attempt
@@ -162,13 +163,13 @@ async def detect_penetration_patterns(
     route_config: RouteConfig | None,
     config: SecurityConfig,
     should_bypass_check_fn: Any,
-) -> tuple[bool, str]:
+) -> DetectionResult:
     penetration_enabled, route_specific_detection = _get_effective_penetration_setting(
         config, route_config
     )
 
     if penetration_enabled and not should_bypass_check_fn("penetration", route_config):
-        return await detect_penetration_attempt(request)
+        return await detect_penetration_attempt(request, config, route_config)
 
     reason = _get_detection_disabled_reason(config, route_specific_detection)
-    return False, reason
+    return DetectionResult(is_threat=False, trigger_info=reason)

@@ -1,5 +1,4 @@
 import time
-from collections.abc import Generator
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
@@ -8,6 +7,17 @@ from guard_core.sync.handlers.ipban_handler import IPBanManager
 from guard_core.sync.handlers.ratelimit_handler import RateLimitManager
 from guard_core.sync.handlers.security_headers_handler import SecurityHeadersManager
 from tests.test_sync.conftest import REDIS_URL, SyncMockGuardRequest
+
+
+class _FailingConnection:
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    def __enter__(self) -> None:
+        raise self._exc
+
+    def __exit__(self, *_args: object) -> None:
+        return None
 
 
 def test_ipban_initialize_redis() -> None:
@@ -51,7 +61,7 @@ def test_ipban_reset_with_redis() -> None:
     mock_conn.delete = MagicMock()
 
     @contextmanager
-    def mock_get_connection() -> Generator[MagicMock, None, None]:
+    def mock_get_connection():
         yield mock_conn
 
     redis = MagicMock()
@@ -73,7 +83,7 @@ def test_ipban_reset_with_redis_no_keys() -> None:
     mock_conn.delete = MagicMock()
 
     @contextmanager
-    def mock_get_connection() -> Generator[MagicMock, None, None]:
+    def mock_get_connection():
         yield mock_conn
 
     redis = MagicMock()
@@ -130,7 +140,7 @@ def test_ratelimit_initialize_redis() -> None:
     mock_conn.script_load = MagicMock(return_value="sha123")
 
     @contextmanager
-    def mock_get_connection() -> Generator[MagicMock, None, None]:
+    def mock_get_connection():
         yield mock_conn
 
     redis = MagicMock()
@@ -145,12 +155,8 @@ def test_ratelimit_initialize_redis_exception() -> None:
     config = SecurityConfig(enable_redis=True, redis_url="redis://localhost:6379")
     mgr = RateLimitManager(config)
 
-    @contextmanager
-    def mock_get_connection() -> Generator[MagicMock, None, None]:
-        raise Exception("conn fail")
-
     redis = MagicMock()
-    redis.get_connection = mock_get_connection
+    redis.get_connection = lambda: _FailingConnection(Exception("conn fail"))
     mgr.redis_handler = redis
     mgr.initialize_redis(redis)
     assert mgr.rate_limit_script_sha is None
@@ -166,7 +172,7 @@ def test_ratelimit_redis_count_with_script() -> None:
     mock_conn.evalsha = MagicMock(return_value=5)
 
     @contextmanager
-    def mock_get_connection() -> Generator[MagicMock, None, None]:
+    def mock_get_connection():
         yield mock_conn
 
     redis = MagicMock()
@@ -196,7 +202,7 @@ def test_ratelimit_redis_count_without_script() -> None:
     mock_conn.pipeline = MagicMock(return_value=mock_pipeline)
 
     @contextmanager
-    def mock_get_connection() -> Generator[MagicMock, None, None]:
+    def mock_get_connection():
         yield mock_conn
 
     redis = MagicMock()
@@ -217,12 +223,8 @@ def test_ratelimit_redis_count_redis_error() -> None:
     mgr = RateLimitManager(config)
     mgr.rate_limit_script_sha = "sha123"
 
-    @contextmanager
-    def mock_get_connection() -> Generator[MagicMock, None, None]:
-        raise RedisError("conn fail")
-
     redis = MagicMock()
-    redis.get_connection = mock_get_connection
+    redis.get_connection = lambda: _FailingConnection(RedisError("conn fail"))
     redis.config = MagicMock()
     redis.config.redis_prefix = "test:"
     mgr.redis_handler = redis
@@ -237,12 +239,8 @@ def test_ratelimit_redis_count_generic_error() -> None:
     mgr = RateLimitManager(config)
     mgr.rate_limit_script_sha = "sha123"
 
-    @contextmanager
-    def mock_get_connection() -> Generator[MagicMock, None, None]:
-        raise Exception("generic fail")
-
     redis = MagicMock()
-    redis.get_connection = mock_get_connection
+    redis.get_connection = lambda: _FailingConnection(Exception("generic fail"))
     redis.config = MagicMock()
     redis.config.redis_prefix = "test:"
     mgr.redis_handler = redis
@@ -280,7 +278,7 @@ def test_ratelimit_check_redis_exceeded() -> None:
     mock_conn.evalsha = MagicMock(return_value=10)
 
     @contextmanager
-    def mock_get_connection() -> Generator[MagicMock, None, None]:
+    def mock_get_connection():
         yield mock_conn
 
     redis = MagicMock()
@@ -312,7 +310,7 @@ def test_ratelimit_check_redis_ok() -> None:
     mock_conn.evalsha = MagicMock(return_value=2)
 
     @contextmanager
-    def mock_get_connection() -> Generator[MagicMock, None, None]:
+    def mock_get_connection():
         yield mock_conn
 
     redis = MagicMock()
@@ -336,12 +334,8 @@ def test_ratelimit_check_falls_back_to_memory_when_redis_count_is_none() -> None
     )
     mgr = RateLimitManager(config)
 
-    @contextmanager
-    def mock_get_connection() -> Generator[MagicMock, None, None]:
-        raise RedisError("conn fail")
-
     redis = MagicMock()
-    redis.get_connection = mock_get_connection
+    redis.get_connection = lambda: _FailingConnection(RedisError("conn fail"))
     redis.config = MagicMock()
     redis.config.redis_prefix = "test:"
     mgr.redis_handler = redis
@@ -413,7 +407,7 @@ def test_ratelimit_redis_count_with_endpoint() -> None:
     mock_conn.evalsha = MagicMock(return_value=2)
 
     @contextmanager
-    def mock_get_connection() -> Generator[MagicMock, None, None]:
+    def mock_get_connection():
         yield mock_conn
 
     redis = MagicMock()

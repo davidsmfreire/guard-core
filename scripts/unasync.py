@@ -47,16 +47,24 @@ SUBS: list[tuple[str, str]] = [
         r"from guard_core\.protocols\.geo_ip_protocol import GeoIPHandler",
         "from guard_core.sync.protocols.geo_ip_protocol import SyncGeoIPHandler",
     ),
+    (
+        r"from guard_core\.protocols\.cloud_ip_store_protocol "
+        r"import CloudIpStoreProtocol",
+        "from guard_core.sync.protocols.cloud_ip_store_protocol "
+        "import SyncCloudIpStoreProtocol",
+    ),
     (r"from guard_core\.handlers\.", "from guard_core.sync.handlers."),
     (r"from guard_core\.utils", "from guard_core.sync.utils"),
     (r"from guard_core\.core\.", "from guard_core.sync.core."),
     (r"from guard_core\.detection_engine\b", "from guard_core.sync.detection_engine"),
+    (r"from guard_core\.detection_result\b", "from guard_core.sync.detection_result"),
     (r"from guard_core\.decorators\b", "from guard_core.sync.decorators"),
     (r"(?<!Sync)(?<!\w)GuardMiddlewareProtocol\b", "SyncGuardMiddlewareProtocol"),
     (r"(?<!Sync)(?<!\w)AgentHandlerProtocol\b", "SyncAgentHandlerProtocol"),
     (r"(?<!Sync)(?<!\w)RedisHandlerProtocol\b", "SyncRedisHandlerProtocol"),
     (r"(?<!Sync)(?<!\w)GuardRequest\b", "SyncGuardRequest"),
     (r"(?<!Sync)(?<!\w)GeoIPHandler\b", "SyncGeoIPHandler"),
+    (r"(?<!Sync)(?<!\w)CloudIpStoreProtocol\b", "SyncCloudIpStoreProtocol"),
     (r"from redis\.asyncio import Redis", "from redis import Redis"),
     (r"redis\.asyncio", "redis"),
     (r"import aiohttp", "import requests"),
@@ -113,6 +121,10 @@ SUBS: list[tuple[str, str]] = [
 ]
 
 TEST_SUBS: list[tuple[str, str]] = [
+    (
+        r"from tests\.conftest import \(([^)]+)\)",
+        r"from tests.test_sync.conftest import (\1)",
+    ),
     (
         r"from tests\.conftest import MockGuardRequest",
         "from tests.test_sync.conftest import SyncMockGuardRequest",

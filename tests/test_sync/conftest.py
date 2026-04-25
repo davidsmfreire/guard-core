@@ -14,9 +14,9 @@ from guard_core.sync.handlers.ratelimit_handler import rate_limit_handler
 from guard_core.sync.handlers.redis_handler import RedisManager
 from guard_core.sync.handlers.suspatterns_handler import sus_patterns_handler
 
-IPINFO_TOKEN = str(os.getenv("IPINFO_TOKEN"))
-REDIS_URL = str(os.getenv("REDIS_URL"))
-REDIS_PREFIX = str(os.getenv("REDIS_PREFIX"))
+IPINFO_TOKEN = os.getenv("IPINFO_TOKEN") or "test_token"
+REDIS_URL = os.getenv("REDIS_URL") or "redis://localhost:6379"
+REDIS_PREFIX = os.getenv("REDIS_PREFIX") or "test:guard_core:"
 
 
 class MockState:
@@ -140,9 +140,12 @@ def reset_state() -> Generator[None, None]:
 
     cloud_instance = cloud_handler._instance
     if cloud_instance:
+        from guard_core.sync.handlers.cloud_ip_stores import InMemoryCloudIpStore
+
         cloud_instance.ip_ranges = {"AWS": set(), "GCP": set(), "Azure": set()}
         cloud_instance.redis_handler = None
         cloud_instance.agent_handler = None
+        cloud_instance._store = InMemoryCloudIpStore()
 
     if IPInfoManager._instance:
         if IPInfoManager._instance.reader:
@@ -226,7 +229,15 @@ def redis_cleanup() -> Generator[None, None]:
         pass
     finally:
         redis_handler.close()
-    yield  # type: ignore
+    yield
+    redis_handler = RedisManager(config)
+    redis_handler.initialize()
+    try:
+        redis_handler.delete_pattern(f"{REDIS_PREFIX}*")
+    except Exception:
+        pass
+    finally:
+        redis_handler.close()
 
 
 @pytest.fixture(autouse=True)

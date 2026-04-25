@@ -3,11 +3,16 @@ import re
 import time
 from datetime import datetime, timezone
 from ipaddress import ip_address, ip_network
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
+from guard_core.detection_result import DetectionResult
 from guard_core.protocols.agent_protocol import AgentHandlerProtocol
 from guard_core.protocols.geo_ip_protocol import GeoIPHandler
 from guard_core.protocols.request_protocol import GuardRequest
+
+if TYPE_CHECKING:
+    from guard_core.decorators.base import RouteConfig
+    from guard_core.models import SecurityConfig
 
 
 def _sanitize_for_log(value: str) -> str:
@@ -98,7 +103,9 @@ def setup_custom_logging(
     log_file: str | None = None, log_format: str = "text"
 ) -> logging.Logger:
     logger = logging.getLogger("guard_core")
-    logger.handlers.clear()
+    for handler in logger.handlers[:]:
+        handler.close()
+        logger.removeHandler(handler)
 
     formatter = _create_formatter(log_format)
 
@@ -509,7 +516,8 @@ def _build_threat_message(threat: dict[str, Any]) -> str:
 async def _fallback_pattern_check(value: str) -> tuple[bool, str]:
     from guard_core.handlers.suspatterns_handler import sus_patterns_handler
 
-    for pattern, _contexts in await sus_patterns_handler.get_all_compiled_patterns():
+    all_compiled = await sus_patterns_handler.get_all_compiled_patterns()
+    for pattern, _contexts, _category in all_compiled:
         try:
             if pattern.search(value):
                 return True, "Value matched pattern (fallback)"
@@ -523,12 +531,14 @@ async def _check_value_enhanced(
     context: str,
     client_ip: str,
     correlation_id: str,
-) -> tuple[bool, str]:
+    enabled_categories: set[str] | None = None,
+) -> tuple[bool, str, list[dict]]:
     from guard_core.handlers.suspatterns_handler import sus_patterns_handler
 
     json_result = await _try_check_json_value(value, context, client_ip, correlation_id)
     if json_result is not None:
-        return json_result
+        detected, trigger = json_result
+        return detected, trigger, []
 
     try:
         result = await sus_patterns_handler.detect(
@@ -536,20 +546,22 @@ async def _check_value_enhanced(
             ip_address=client_ip,
             context=context,
             correlation_id=correlation_id,
+            enabled_categories=enabled_categories,
         )
 
         if not result["is_threat"]:
-            return False, ""
+            return False, "", []
 
-        if result["threats"]:
-            threat = result["threats"][0]
-            return True, _build_threat_message(threat)
+        threats: list[dict] = list(result.get("threats", []))
+        if threats:
+            return True, _build_threat_message(threats[0]), threats
 
-        return True, "Threat detected"
+        return True, "Threat detected", threats
 
     except Exception as e:
         logging.error(f"Enhanced detection failed: {e}, falling back to basic check")
-        return await _fallback_pattern_check(value)
+        detected, trigger = await _fallback_pattern_check(value)
+        return detected, trigger, []
 
 
 async def _check_request_component(
@@ -558,9 +570,10 @@ async def _check_request_component(
     component_name: str,
     client_ip: str,
     correlation_id: str,
-) -> tuple[bool, str]:
-    detected, trigger = await _check_value_enhanced(
-        value, context, client_ip, correlation_id
+    enabled_categories: set[str] | None = None,
+) -> tuple[bool, str, list[dict]]:
+    detected, trigger, threats = await _check_value_enhanced(
+        value, context, client_ip, correlation_id, enabled_categories
     )
     if detected:
         message = "Potential attack detected from"
@@ -571,36 +584,47 @@ async def _check_request_component(
         )
         reason_message = f"Suspicious pattern in {component_name}"
         logging.warning(f"{message} {details} - {reason_message}")
-    return detected, trigger
+    return detected, trigger, threats
 
 
-async def detect_penetration_attempt(request: GuardRequest) -> tuple[bool, str]:
-    import uuid
+def _resolve_excluded_params(
+    config: "SecurityConfig | None", route_config: "RouteConfig | None"
+) -> set[str]:
+    if route_config is not None and route_config.excluded_detection_params is not None:
+        return {k.lower() for k in route_config.excluded_detection_params}
+    if config is not None:
+        return {k.lower() for k in config.excluded_detection_params}
+    return set()
 
-    client_ip = "unknown"
-    if request.client_host:
-        client_ip = request.client_host
 
-    correlation_id = str(uuid.uuid4())
+def _resolve_excluded_body_fields(
+    config: "SecurityConfig | None", route_config: "RouteConfig | None"
+) -> set[str]:
+    if (
+        route_config is not None
+        and route_config.excluded_detection_body_fields is not None
+    ):
+        return {k.lower() for k in route_config.excluded_detection_body_fields}
+    if config is not None:
+        return {k.lower() for k in config.excluded_detection_body_fields}
+    return set()
 
-    for key, value in request.query_params.items():
-        detected, trigger = await _check_request_component(
-            value,
-            f"query_param:{key}",
-            f"query param '{key}'",
-            client_ip,
-            correlation_id,
-        )
-        if detected:
-            return True, f"Query param '{key}': {trigger}"
 
-    detected, trigger = await _check_request_component(
-        request.url_path, "url_path", "URL path", client_ip, correlation_id
-    )
-    if detected:
-        return True, f"URL path: {trigger}"
+def _resolve_enabled_categories(
+    config: "SecurityConfig | None", route_config: "RouteConfig | None"
+) -> set[str] | None:
+    if (
+        route_config is not None
+        and route_config.enabled_detection_categories is not None
+    ):
+        return set(route_config.enabled_detection_categories)
+    if config is not None:
+        return set(config.enabled_detection_categories)
+    return None
 
-    excluded_headers = {
+
+_DEFAULT_EXCLUDED_HEADERS: frozenset[str] = frozenset(
+    {
         "host",
         "user-agent",
         "accept",
@@ -615,22 +639,201 @@ async def detect_penetration_attempt(request: GuardRequest) -> tuple[bool, str]:
         "sec-ch-ua-mobile",
         "sec-ch-ua-platform",
     }
-    for key, value in request.headers.items():
-        if key.lower() not in excluded_headers:
-            detected, trigger = await _check_request_component(
-                value, f"header:{key}", f"header '{key}'", client_ip, correlation_id
-            )
-            if detected:
-                return True, f"Header '{key}': {trigger}"
+)
 
-    try:
-        body = (await request.body()).decode()
-        detected, trigger = await _check_request_component(
-            body, "request_body", "request body", client_ip, correlation_id
+
+def _resolve_excluded_headers(
+    config: "SecurityConfig | None", route_config: "RouteConfig | None"
+) -> set[str]:
+    excluded = set(_DEFAULT_EXCLUDED_HEADERS)
+    if config is not None:
+        excluded |= {h.lower() for h in config.excluded_detection_headers}
+    if route_config is not None and route_config.excluded_detection_headers is not None:
+        excluded |= {h.lower() for h in route_config.excluded_detection_headers}
+    return excluded
+
+
+async def _scan_query_params(
+    request: GuardRequest,
+    excluded_params: set[str],
+    enabled_categories: set[str] | None,
+    client_ip: str,
+    correlation_id: str,
+) -> tuple[bool, str, list[dict]]:
+    for key, value in request.query_params.items():
+        if key.lower() in excluded_params:
+            continue
+        detected, trigger, threats = await _check_request_component(
+            value,
+            f"query_param:{key}",
+            f"query param '{key}'",
+            client_ip,
+            correlation_id,
+            enabled_categories,
         )
         if detected:
-            return True, f"Request body: {trigger}"
-    except Exception:
-        pass
+            return True, f"Query param '{key}': {trigger}", threats
+    return False, "", []
 
-    return False, ""
+
+async def _scan_headers(
+    request: GuardRequest,
+    excluded_headers: set[str],
+    enabled_categories: set[str] | None,
+    client_ip: str,
+    correlation_id: str,
+) -> tuple[bool, str, list[dict]]:
+    for key, value in request.headers.items():
+        if key.lower() in excluded_headers:
+            continue
+        detected, trigger, threats = await _check_request_component(
+            value,
+            f"header:{key}",
+            f"header '{key}'",
+            client_ip,
+            correlation_id,
+            enabled_categories,
+        )
+        if detected:
+            return True, f"Header '{key}': {trigger}", threats
+    return False, "", []
+
+
+async def _scan_request_body(
+    raw_body: str,
+    excluded_body_fields: set[str],
+    enabled_categories: set[str] | None,
+    client_ip: str,
+    correlation_id: str,
+) -> tuple[bool, str, list[dict]]:
+    import json
+
+    parsed_body: Any | None = None
+    if excluded_body_fields:
+        try:
+            parsed_body = json.loads(raw_body)
+        except Exception:
+            parsed_body = None
+
+    if isinstance(parsed_body, dict):
+        for key, value in parsed_body.items():
+            if str(key).lower() in excluded_body_fields:
+                continue
+            detected, trigger, threats = await _check_request_component(
+                str(value),
+                "request_body",
+                f"request body field '{key}'",
+                client_ip,
+                correlation_id,
+                enabled_categories,
+            )
+            if detected:
+                return True, f"Request body field '{key}': {trigger}", threats
+        return False, "", []
+
+    detected, trigger, threats = await _check_request_component(
+        raw_body,
+        "request_body",
+        "request body",
+        client_ip,
+        correlation_id,
+        enabled_categories,
+    )
+    if detected:
+        return True, f"Request body: {trigger}", threats
+    return False, "", []
+
+
+def _threat_category(threat: dict) -> str | None:
+    if threat.get("type") == "regex":
+        category = threat.get("category")
+        return category if isinstance(category, str) else None
+    if threat.get("type") == "semantic":
+        attack_type = threat.get("attack_type")
+        return attack_type if isinstance(attack_type, str) else None
+    return None
+
+
+def _threat_score(threat: dict) -> float:
+    if "probability" in threat:
+        return float(threat["probability"])
+    if "threat_score" in threat:
+        return float(threat["threat_score"])
+    return 1.0
+
+
+def _build_detection_hit(trigger: str, threats: list[dict]) -> DetectionResult:
+    categories: list[str] = []
+    scores: dict[str, float] = {}
+    for threat in threats:
+        category = _threat_category(threat)
+        if category is None:
+            continue
+        if category not in categories:
+            categories.append(category)
+        score = _threat_score(threat)
+        scores[category] = max(scores.get(category, 0.0), score)
+    return DetectionResult(
+        is_threat=True,
+        trigger_info=trigger,
+        threat_categories=categories,
+        threat_scores=scores,
+    )
+
+
+def _build_detection_miss() -> DetectionResult:
+    return DetectionResult(is_threat=False, trigger_info="")
+
+
+async def detect_penetration_attempt(
+    request: GuardRequest,
+    config: "SecurityConfig | None" = None,
+    route_config: "RouteConfig | None" = None,
+) -> DetectionResult:
+    import uuid
+
+    client_ip = "unknown"
+    if request.client_host:
+        client_ip = request.client_host
+
+    correlation_id = str(uuid.uuid4())
+
+    excluded_params = _resolve_excluded_params(config, route_config)
+    excluded_body_fields = _resolve_excluded_body_fields(config, route_config)
+    enabled_categories = _resolve_enabled_categories(config, route_config)
+    excluded_headers = _resolve_excluded_headers(config, route_config)
+
+    detected, trigger, threats = await _scan_query_params(
+        request, excluded_params, enabled_categories, client_ip, correlation_id
+    )
+    if detected:
+        return _build_detection_hit(trigger, threats)
+
+    detected, trigger, threats = await _check_request_component(
+        request.url_path,
+        "url_path",
+        "URL path",
+        client_ip,
+        correlation_id,
+        enabled_categories,
+    )
+    if detected:
+        return _build_detection_hit(f"URL path: {trigger}", threats)
+
+    detected, trigger, threats = await _scan_headers(
+        request, excluded_headers, enabled_categories, client_ip, correlation_id
+    )
+    if detected:
+        return _build_detection_hit(trigger, threats)
+
+    try:
+        raw_body = (await request.body()).decode()
+    except Exception:
+        return _build_detection_miss()
+
+    detected, trigger, threats = await _scan_request_body(
+        raw_body, excluded_body_fields, enabled_categories, client_ip, correlation_id
+    )
+    if detected:
+        return _build_detection_hit(trigger, threats)
+    return _build_detection_miss()
