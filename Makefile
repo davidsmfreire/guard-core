@@ -231,6 +231,12 @@ local-test:
 	@find . | grep -E "(__pycache__|\\.pyc|\\.pyo|\\.pytest_cache|\\.ruff_cache|\\.mypy_cache)" | xargs rm -rf
 
 
+.PHONY: integration-test
+integration-test:
+	@INTEGRATION_TESTS=1 uv run pytest tests/integration -m integration -v
+	@find . | grep -E "(__pycache__|\\.pyc|\\.pyo|\\.pytest_cache|\\.ruff_cache|\\.mypy_cache)" | xargs rm -rf
+
+
 .PHONY: serve-docs
 serve-docs:
 	@uv run mkdocs serve

@@ -53,6 +53,7 @@ dev = [
     "radon",
     "ruff",
     "safety",
+    "testcontainers",
     "types-cachetools",
     "types-requests",
     "vulture",
@@ -112,9 +113,10 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 asyncio_default_fixture_loop_scope = "function"
-addopts = "--cov=guard_core --cov-branch --cov-report=term-missing"
+addopts = "--cov=guard_core --cov-branch --cov-report=term-missing -m 'not integration'"
 markers = [
-    "asyncio: mark tests as async"
+    "asyncio: mark tests as async",
+    "integration: marks tests that require Docker + external services (deselect with '-m \"not integration\"')",
 ]
 
 [tool.mypy]
@@ -277,6 +279,7 @@ per_rule_ignores = { "DEP002" = [
     "ruff",
     "safety",
     "semgrep",
+    "testcontainers",
     "types-cachetools",
     "types-requests",
     "vulture",
