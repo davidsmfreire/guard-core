@@ -75,8 +75,14 @@ nav:
     - Models: api/models.md
     - Handlers: api/handlers.md
     - Detection Engine: api/detection-engine.md
+    - DetectionResult: api/detection-result.md
+    - Ban Configuration: api/ban-config.md
+    - Behavior Rules: api/behavior-rules.md
+    - Cloud IP Store: api/cloud-ip-store.md
     - Decorators: api/decorators.md
     - Utilities: api/utilities.md
+  - Migration:
+    - v1.x to v2.0: migration/v1-to-v2.md
   - Release Notes: release-notes.md
 
 markdown_extensions:

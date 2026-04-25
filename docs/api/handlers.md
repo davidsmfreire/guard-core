@@ -423,12 +423,15 @@ SusPatternsManager
 
 Orchestrates the detection engine for threat pattern matching and semantic analysis.
 
+!!! note "Compiled-pattern tuples are 3-tuples"
+    Each compiled pattern carries a category label as its third element: `(re.Pattern, frozenset[str], str)`. Built-in patterns use one of the 16 labels in `ALL_DETECTION_CATEGORIES` (`"xss"`, `"sqli"`, ...). Custom user patterns added via `add_pattern(..., custom=True)` carry the literal label `"custom"` and run regardless of any `enabled_categories` filtering.
+
 ```python
 class SusPatternsManager:
     patterns: list[str]
     custom_patterns: set[str]
-    compiled_patterns: list[tuple[re.Pattern, frozenset[str]]]
-    compiled_custom_patterns: set[tuple[re.Pattern, frozenset[str]]]
+    compiled_patterns: list[tuple[re.Pattern, frozenset[str], str]]
+    compiled_custom_patterns: set[tuple[re.Pattern, frozenset[str], str]]
     redis_handler: Any
     agent_handler: Any
 
@@ -457,10 +460,13 @@ class SusPatternsManager:
         ip_address: str,
         context: str = "unknown",
         correlation_id: str | None = None,
+        enabled_categories: set[str] | None = None,
     ) -> dict[str, Any]:
         """
         Run full detection (regex + semantic) on content.
         Returns a result dict with is_threat, threat_score, threats, etc.
+        When enabled_categories is None, all built-in categories run.
+        Custom patterns always run regardless of the filter.
         """
 
     async def detect_pattern_match(
@@ -502,7 +508,7 @@ class SusPatternsManager:
     @classmethod
     async def get_all_compiled_patterns(
         cls,
-    ) -> list[tuple[re.Pattern, frozenset[str]]]: ...
+    ) -> list[tuple[re.Pattern, frozenset[str], str]]: ...
 
     @classmethod
     async def get_performance_stats(cls) -> dict[str, Any] | None:

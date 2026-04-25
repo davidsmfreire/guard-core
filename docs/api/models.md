@@ -42,6 +42,16 @@ class SecurityConfig(BaseModel):
     auto_ban_threshold: int = Field(default=10)
     auto_ban_duration: int = Field(default=3600)
 
+    threat_ban_config: dict[str, ThreatBanConfig] = Field(default_factory=dict)
+    global_behavior_rules: list[BehaviorRuleConfig] = Field(default_factory=list)
+
+    excluded_detection_headers: set[str] = Field(default_factory=set)
+    excluded_detection_params: set[str] = Field(default_factory=set)
+    excluded_detection_body_fields: set[str] = Field(default_factory=set)
+    enabled_detection_categories: set[str] = Field(
+        default_factory=lambda: set(ALL_DETECTION_CATEGORIES)
+    )
+
     custom_log_file: str | None = Field(default=None)
     log_suspicious_level: Literal[
         "INFO", "DEBUG", "WARNING", "ERROR", "CRITICAL"
@@ -81,6 +91,10 @@ class SecurityConfig(BaseModel):
 
     block_cloud_providers: set[str] | None = Field(default=None)
     cloud_ip_refresh_interval: int = Field(default=3600, ge=60, le=86400)
+    cloud_ip_store: CloudIpStoreProtocol | None = Field(default=None)
+
+    lazy_init: bool = Field(default=False)
+    geo_ip_db_max_age: int = Field(default=86400, ge=3600, le=604800)
 
     exclude_paths: list[str] = Field(
         default_factory=lambda: [
@@ -158,8 +172,101 @@ class SecurityConfig(BaseModel):
 | `validate_trusted_proxies` | `trusted_proxies` | Validates proxy IP addresses and CIDR ranges |
 | `validate_proxy_depth` | `trusted_proxy_depth` | Ensures depth is at least 1 |
 | `validate_cloud_providers` | `block_cloud_providers` | Filters to valid providers: AWS, GCP, Azure |
+| `validate_enabled_detection_categories` | `enabled_detection_categories` | Rejects unknown labels (must be a subset of `ALL_DETECTION_CATEGORIES`) |
+| `validate_threat_ban_config` | `threat_ban_config` | Rejects unknown category keys |
 | `validate_geo_ip_handler_exists` | model-level | Requires `geo_ip_handler` when country filtering is configured |
 | `validate_agent_config` | model-level | Requires `agent_api_key` when agent is enabled |
+
+### Detection Exclusion Fields
+
+These fields opt specific request components out of penetration detection. Headers, params, and body-field exclusion sets are merged with the hardcoded default header list (`host`, `user-agent`, `sec-fetch-*`, etc.). `enabled_detection_categories` narrows the scan to a subset of the 16 known threat categories.
+
+| Field                              | Type        | Default                          | Description                                                                |
+|------------------------------------|-------------|----------------------------------|----------------------------------------------------------------------------|
+| `excluded_detection_headers`       | `set[str]`  | `set()`                          | Header names skipped by detection. Merged with the hardcoded default list. |
+| `excluded_detection_params`        | `set[str]`  | `set()`                          | Query parameter names skipped by detection.                                |
+| `excluded_detection_body_fields`   | `set[str]`  | `set()`                          | Top-level JSON body keys skipped by detection.                             |
+| `enabled_detection_categories`     | `set[str]`  | `set(ALL_DETECTION_CATEGORIES)`  | Categories scanned for. Validator rejects unknown labels.                  |
+
+`ALL_DETECTION_CATEGORIES` is defined in `guard_core.handlers.suspatterns_handler` and contains: `xss`, `sqli`, `dir_traversal`, `path_traversal`, `cmd_injection`, `file_inclusion`, `ldap`, `xml`, `ssrf`, `nosql`, `file_upload`, `template`, `http_split`, `sensitive_file`, `cms_probing`, `recon`. Custom user patterns carry the literal category `"custom"` and run regardless of `enabled_detection_categories` filtering.
+
+### Per-Category Ban Configuration
+
+`threat_ban_config` lets operators set per-category ban thresholds and durations. Categories not present in the dict fall back to the flat `auto_ban_threshold` / `auto_ban_duration`.
+
+| Field                | Type                              | Default | Description                                          |
+|----------------------|-----------------------------------|---------|------------------------------------------------------|
+| `threat_ban_config`  | `dict[str, ThreatBanConfig]`      | `{}`    | Per-category overrides. Validator rejects unknown keys. |
+
+See [Ban Configuration](ban-config.md) for `ThreatBanConfig` details and examples.
+
+### Global Behavior Rules
+
+`global_behavior_rules` applies behavior rules to every route without requiring decorators. Useful for global 404 noise tracking or service-wide frequency rules.
+
+| Field                    | Type                          | Default | Description                                  |
+|--------------------------|-------------------------------|---------|----------------------------------------------|
+| `global_behavior_rules`  | `list[BehaviorRuleConfig]`    | `[]`    | Behavior rules merged into every route.      |
+
+See [Behavior Rules](behavior-rules.md) for `BehaviorRuleConfig` details and the detection-correlation example.
+
+### IP Lifecycle Controls
+
+These fields tune how guard-core bootstraps geo-IP and cloud-IP data. They are inert by default and only matter for cold-start tuning or horizontal-scale deployments.
+
+| Field                | Type                          | Default | Description                                                      |
+|----------------------|-------------------------------|---------|------------------------------------------------------------------|
+| `lazy_init`          | `bool`                        | `False` | Defer IPInfo MMDB download and cloud-IP fetches until first request. |
+| `geo_ip_db_max_age`  | `int`                         | `86400` | Maximum age in seconds for IPInfo MMDB before re-download (3600 - 604800). |
+| `cloud_ip_store`     | `CloudIpStoreProtocol \| None` | `None` | Pluggable cloud-IP backend. `None` uses the in-memory default. |
+
+See [Cloud IP Store](cloud-ip-store.md) for the protocol contract and the in-memory / Redis implementations.
+
+___
+
+ThreatBanConfig
+---------------
+
+Per-category ban policy. Used as the value type in `SecurityConfig.threat_ban_config`.
+
+```python
+class ThreatBanConfig(BaseModel):
+    threshold: int = Field(ge=1)
+    duration: int = Field(ge=1)
+```
+
+| Field       | Type | Description                                       |
+|-------------|------|---------------------------------------------------|
+| `threshold` | `int` | Number of detections in this category before auto-ban. |
+| `duration`  | `int` | Ban duration in seconds.                          |
+
+___
+
+BehaviorRuleConfig
+------------------
+
+Configuration shape for entries in `SecurityConfig.global_behavior_rules`. Mirrors the `BehaviorRule` decorator API but is serializable through Pydantic.
+
+```python
+class BehaviorRuleConfig(BaseModel):
+    rule_type: Literal["usage", "return_pattern", "frequency"]
+    threshold: int = Field(ge=1)
+    window: int = Field(default=3600, ge=1)
+    pattern: str | None = None
+    action: Literal["ban", "log", "throttle", "alert"] = "log"
+    ban_duration: int | None = Field(default=None, ge=1)
+    correlate_with_detection: bool = False
+```
+
+| Field                       | Type                                          | Default  | Description                                                                 |
+|-----------------------------|-----------------------------------------------|----------|-----------------------------------------------------------------------------|
+| `rule_type`                 | `"usage" \| "return_pattern" \| "frequency"`  | required | Rule kind. `return_pattern` matches against response status / body content. |
+| `threshold`                 | `int`                                         | required | Trigger count within `window`.                                              |
+| `window`                    | `int`                                         | `3600`   | Window in seconds.                                                          |
+| `pattern`                   | `str \| None`                                 | `None`   | Match expression for `return_pattern` rules (e.g. `"status:404"`).          |
+| `action`                    | `"ban" \| "log" \| "throttle" \| "alert"`     | `"log"`  | Action when threshold is exceeded.                                          |
+| `ban_duration`              | `int \| None`                                 | `None`   | Override for `auto_ban_duration` when `action="ban"`.                       |
+| `correlate_with_detection`  | `bool`                                        | `False`  | Halve the threshold (floor 1) when the IP has any positive `suspicious_request_counts` entry. |
 
 ___
 

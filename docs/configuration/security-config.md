@@ -68,6 +68,141 @@ IP Management
 
 ___
 
+Per-Category Bans
+-----------------
+
+`threat_ban_config` lets each detection category carry its own threshold and duration. The pipeline tracks per-category counts in `suspicious_request_counts`, then walks the matched categories of the current detection. The first category whose own count reaches its `threshold` triggers a category-tagged ban; if no per-category entry matches, the flat `auto_ban_threshold` / `auto_ban_duration` fallback fires off the *total* count instead.
+
+| Field                | Type                              | Default | Description                                          |
+|----------------------|-----------------------------------|---------|------------------------------------------------------|
+| `threat_ban_config`  | `dict[str, ThreatBanConfig]`      | `{}`    | Per-category ban policy. Validator rejects unknown keys. |
+
+When to use:
+
+- You want SQL injection detections to be a single-strike ban for a week, but XSS detections to be a 3-strike ban for an hour.
+- You want to keep the existing flat threshold for any category you do not name.
+- You want the audit log reasons to disambiguate which category triggered the ban (`"penetration_attempt:sqli"` vs the flat `"penetration_attempt"`).
+
+```python
+from guard_core.models import SecurityConfig, ThreatBanConfig
+
+config = SecurityConfig(
+    auto_ban_threshold=10,
+    auto_ban_duration=3600,
+    threat_ban_config={
+        "sqli": ThreatBanConfig(threshold=1, duration=604800),
+        "xss": ThreatBanConfig(threshold=3, duration=86400),
+    },
+)
+```
+
+See [Ban Configuration](../api/ban-config.md) for the `ThreatBanConfig` model and the full fall-through rule.
+
+___
+
+Global Behavior Rules
+---------------------
+
+`global_behavior_rules` applies behavior rules to every route without requiring decorators. The merged rules are run alongside any decorator-specified rules. The most common use is service-wide 404-noise correlation, but the same shape supports `usage`, `frequency`, and `return_pattern` rules.
+
+| Field                    | Type                          | Default | Description                                  |
+|--------------------------|-------------------------------|---------|----------------------------------------------|
+| `global_behavior_rules`  | `list[BehaviorRuleConfig]`    | `[]`    | Behavior rules merged into every route.      |
+
+When to use:
+
+- You want a global "ban after 20 404s in 5 minutes" rule that does not require touching every route.
+- You want detection-correlated thresholds — `correlate_with_detection=True` halves the threshold (floor 1) when the IP has any positive `suspicious_request_counts` entry, so probing that already triggered a regex hit gets banned faster.
+- You want a service-wide frequency or usage cap for any caller, regardless of which route they hit.
+
+```python
+from guard_core.models import BehaviorRuleConfig, SecurityConfig
+
+config = SecurityConfig(
+    global_behavior_rules=[
+        BehaviorRuleConfig(
+            rule_type="return_pattern",
+            threshold=20,
+            window=300,
+            pattern="status:404",
+            action="ban",
+            ban_duration=3600,
+            correlate_with_detection=True,
+        ),
+    ],
+)
+```
+
+See [Behavior Rules](../api/behavior-rules.md) for the full field reference.
+
+___
+
+Detection Exclusions
+--------------------
+
+These fields opt request components out of penetration detection. The header set is merged with a hardcoded default that already excludes `host`, `user-agent`, `accept`, `accept-encoding`, `connection`, `origin`, `referer`, all `sec-fetch-*`, and all `sec-ch-ua*` headers. `enabled_detection_categories` narrows the regex scan to a subset of the 16 known categories; custom user patterns always run regardless.
+
+| Field                              | Type        | Default                          | Description                                                                |
+|------------------------------------|-------------|----------------------------------|----------------------------------------------------------------------------|
+| `excluded_detection_headers`       | `set[str]`  | `set()`                          | Header names skipped by detection. Merged with the hardcoded default list. |
+| `excluded_detection_params`        | `set[str]`  | `set()`                          | Query parameter names skipped by detection.                                |
+| `excluded_detection_body_fields`   | `set[str]`  | `set()`                          | Top-level JSON body keys skipped by detection.                             |
+| `enabled_detection_categories`     | `set[str]`  | full `ALL_DETECTION_CATEGORIES`  | Categories scanned for. Validator rejects unknown labels.                  |
+
+When to use:
+
+- A first-party endpoint accepts JSON containing literals (Markdown source, code blobs, URL-shaped query params) that look like attacks but are not.
+- A regression in one category's regex is producing false positives faster than you can write a fix — disable the category temporarily.
+- A privacy-sensitive header value should not be scanned at all.
+- You want different routes to have different opt-outs — pair this with `@security.detection_exclusion(...)` on the route.
+
+```python
+from guard_core.models import SecurityConfig
+
+config = SecurityConfig(
+    excluded_detection_params={"q", "search", "filter"},
+    excluded_detection_body_fields={"description", "markdown"},
+    enabled_detection_categories={"sqli", "xss", "cmd_injection", "ssrf"},
+)
+```
+
+___
+
+IP Lifecycle Controls
+---------------------
+
+These fields tune cold-start and horizontal-scale behaviour for the geo-IP and cloud-IP subsystems. They are inert by default — only adjust if you have a specific cold-start or scale-out problem.
+
+| Field                | Type                            | Default | Description                                                                  |
+|----------------------|---------------------------------|---------|------------------------------------------------------------------------------|
+| `lazy_init`          | `bool`                          | `False` | Defer IPInfo MMDB download and cloud-IP fetches until the first request.     |
+| `geo_ip_db_max_age`  | `int`                           | `86400` | Maximum age in seconds for the IPInfo MMDB before re-download. Range 3600 - 604800. |
+| `cloud_ip_store`     | `CloudIpStoreProtocol \| None`  | `None`  | Pluggable cloud-IP backend. `None` uses the in-memory default; auto-upgraded to Redis when Redis is enabled. |
+
+When to use:
+
+- `lazy_init=True` for environments where slow boot is worse than slow first request (FaaS cold starts, dev containers, CI).
+- `geo_ip_db_max_age` to tighten or loosen the IPInfo refresh cadence — match it to your IPInfo plan's update frequency.
+- `cloud_ip_store` to point multiple horizontally-scaled instances at a single pre-populated Redis namespace, skipping per-instance cloud-IP cold starts.
+
+```python
+from guard_core.handlers.cloud_ip_stores import RedisCloudIpStore
+from guard_core.handlers.redis_handler import RedisManager
+from guard_core.models import SecurityConfig
+
+config = SecurityConfig(
+    lazy_init=True,
+    geo_ip_db_max_age=43200,
+)
+
+shared_store = RedisCloudIpStore(RedisManager(config))
+config_with_shared_store = SecurityConfig(cloud_ip_store=shared_store)
+```
+
+See [Cloud IP Store](../api/cloud-ip-store.md) for the protocol contract and the Redis namespace migration note.
+
+___
+
 Geolocation
 -----------
 

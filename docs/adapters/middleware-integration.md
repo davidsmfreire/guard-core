@@ -40,7 +40,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             config.custom_log_file, log_format=config.log_format
         )
         self.last_cloud_ip_refresh = 0
-        self.suspicious_request_counts: dict[str, int] = {}
+        self.suspicious_request_counts: dict[str, dict[str, int]] = {}
         self.rate_limit_handler = RateLimitManager(config)
         self.guard_decorator: BaseSecurityDecorator | None = None
 
@@ -196,7 +196,7 @@ The protocol requires:
 | `config` | `SecurityConfig` | Configuration object |
 | `logger` | `logging.Logger` | Logger instance |
 | `last_cloud_ip_refresh` | `int` | Unix timestamp of last cloud IP refresh |
-| `suspicious_request_counts` | `dict[str, int]` | Per-IP suspicious request counters |
+| `suspicious_request_counts` | `dict[str, dict[str, int]]` | Per-IP, per-category counters (IP -> category -> count). Read the total via `sum(values())`. |
 | `event_bus` | `SecurityEventBus` | Event dispatching |
 | `route_resolver` | `RouteConfigResolver` | Route config resolution |
 | `response_factory` | `ErrorResponseFactory` | Error response creation |

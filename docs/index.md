@@ -90,5 +90,13 @@ Documentation
 - [Models](api/models.md)
 - [Protocols](api/protocols.md)
 - [Handlers](api/handlers.md)
+- [DetectionResult](api/detection-result.md)
+- [Ban Configuration](api/ban-config.md)
+- [Behavior Rules](api/behavior-rules.md)
+- [Cloud IP Store](api/cloud-ip-store.md)
 - [Decorators](api/decorators.md)
 - [Utilities](api/utilities.md)
+
+### Upgrading
+
+- [Migrating from v1.x to v2.0](migration/v1-to-v2.md) -- breaking changes shipped in 2.0.0 and the migration steps

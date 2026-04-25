@@ -207,7 +207,7 @@ class GuardMiddlewareProtocol(Protocol):
     config: SecurityConfig
     logger: logging.Logger
     last_cloud_ip_refresh: int
-    suspicious_request_counts: dict[str, int]
+    suspicious_request_counts: dict[str, dict[str, int]]
 
     @property
     def event_bus(self) -> Any: ...
@@ -238,7 +238,7 @@ class GuardMiddlewareProtocol(Protocol):
 | `config` | `SecurityConfig` | The security configuration object |
 | `logger` | `logging.Logger` | Logger instance used by all checks |
 | `last_cloud_ip_refresh` | `int` | Unix timestamp of the last cloud IP range refresh |
-| `suspicious_request_counts` | `dict[str, int]` | Per-IP suspicious request counters (for auto-ban threshold) |
+| `suspicious_request_counts` | `dict[str, dict[str, int]]` | Per-IP, per-category suspicious request counters (IP -> category -> count). Read the total via `sum(values())`. |
 
 ### Property Reference
 

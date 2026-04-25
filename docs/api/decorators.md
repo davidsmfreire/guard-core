@@ -122,6 +122,37 @@ Provides content and request filtering decorators.
 - `@guard_deco.max_request_size(size_bytes)` - Limit request size
 - `@guard_deco.require_referrer(allowed_domains=[])` - Require specific referrers
 - `@guard_deco.custom_validation(validator)` - Add custom validation logic
+- `@guard_deco.detection_exclusion(headers=None, params=None, body_fields=None, categories=None)` - Per-route detection scoping
+
+**`detection_exclusion` semantics**
+
+```python
+def detection_exclusion(
+    self,
+    headers: set[str] | None = None,
+    params: set[str] | None = None,
+    body_fields: set[str] | None = None,
+    categories: set[str] | None = None,
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    ...
+```
+
+All four kwargs are optional `set[str] | None`. Passing `None` (or omitting) leaves the corresponding `RouteConfig` field unset — the route inherits the global `SecurityConfig` value at request time. Passing a set replaces the inherited value at this route only.
+
+- `headers` — header names skipped by detection. Merged with `SecurityConfig.excluded_detection_headers` and the hardcoded default exclusion list.
+- `params` — query parameter names skipped by detection. Replaces (does not merge with) the global set when set.
+- `body_fields` — top-level JSON body keys skipped by detection. Replaces the global set when set.
+- `categories` — categories the regex scanner runs at this route. Replaces the global `enabled_detection_categories`. Custom user patterns always run regardless.
+
+```python
+@app.post("/api/markdown-editor/save")
+@guard_deco.detection_exclusion(
+    body_fields={"content", "draft"},
+    categories={"sqli", "cmd_injection"},
+)
+def save_markdown():
+    return {"saved": True}
+```
 
 ### AdvancedMixin
 

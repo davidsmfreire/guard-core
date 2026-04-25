@@ -210,7 +210,7 @@ class MockMiddleware:
         self.config = config
         self.logger = MagicMock()
         self.last_cloud_ip_refresh = 0
-        self.suspicious_request_counts: dict[str, int] = {}
+        self.suspicious_request_counts: dict[str, dict[str, int]] = {}
         self.event_bus = MagicMock()
         self.event_bus.send_middleware_event = AsyncMock()
         self.route_resolver = MagicMock()

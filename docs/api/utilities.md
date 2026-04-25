@@ -132,23 +132,30 @@ detect_penetration_attempt
 ```python
 async def detect_penetration_attempt(
     request: GuardRequest,
-) -> tuple[bool, str]
+    config: SecurityConfig | None = None,
+    route_config: RouteConfig | None = None,
+) -> DetectionResult
 ```
 
 Detect potential penetration attempts in the request using the enhanced Detection Engine.
 
-This function analyzes various parts of the request (query params, body, path, headers) using the Detection Engine's components including pattern matching, semantic analysis, and performance monitoring.
+This function analyzes various parts of the request (query params, URL path, headers, body) using the Detection Engine's components including pattern matching, semantic analysis, and performance monitoring.
 
 Parameters:
 
 - `request`: The request object implementing `GuardRequest`
+- `config`: Optional `SecurityConfig`. When provided, drives global header/param/body-field exclusion sets and the active category filter.
+- `route_config`: Optional `RouteConfig`. Per-route overrides take precedence over `config` when both are non-`None`.
 
-Returns a tuple where:
+Returns a [`DetectionResult`](detection-result.md) dataclass:
 
-- First element is a boolean: `True` if a potential attack is detected, `False` otherwise
-- Second element is a string with details about what triggered the detection, or empty string if no attack detected
+- `is_threat: bool` — `True` if any pattern (regex or semantic) matched.
+- `trigger_info: str` — Human-readable description of what triggered the hit, or empty string when `is_threat` is `False`.
+- `threat_categories: list[str]` — Ordered list of categories that matched (e.g. `["sqli", "xss"]`). Categories with no `category` label (legacy semantic threats) are skipped.
+- `threat_scores: dict[str, float]` — Maximum score recorded per category. Regex matches contribute `1.0`; semantic matches contribute their probability or threat score.
 
 The Detection Engine provides:
+
 - Timeout-protected pattern matching (configured via `detection_compiler_timeout` in SecurityConfig)
 - Intelligent content preprocessing that preserves attack patterns
 - Semantic analysis for obfuscated attacks (when enabled)
@@ -162,21 +169,15 @@ from guard_core.utils import detect_penetration_attempt
 
 @app.post("/api/submit")
 async def submit_data(request: GuardRequest):
-    # Detection uses configuration from SecurityConfig
-    is_suspicious, trigger_info = await detect_penetration_attempt(request)
-    if is_suspicious:
-        # Log the detection with details
-        logger.warning(f"Attack detected: {trigger_info}")
-        return {"error": "Suspicious activity detected"}
-    return {"success": True}
-
-@app.post("/api/critical")
-async def critical_endpoint(request: GuardRequest):
-    # Timeout protection is configured via SecurityConfig.detection_compiler_timeout
-    is_suspicious, trigger_info = await detect_penetration_attempt(request)
-    if is_suspicious:
-        return {"error": "Security check failed"}
-    return {"success": True}
+    result = await detect_penetration_attempt(request)
+    if not result.is_threat:
+        return {"success": True}
+    logger.warning(
+        f"Attack detected: {result.trigger_info} "
+        f"categories={result.threat_categories} "
+        f"scores={result.threat_scores}"
+    )
+    return {"error": "Suspicious activity detected"}
 ```
 
 extract_client_ip
@@ -240,5 +241,7 @@ await log_activity(
 )
 
 # Check for penetration attempts
-is_suspicious, trigger_info = await detect_penetration_attempt(request)
+result = await detect_penetration_attempt(request)
+if result.is_threat:
+    logger.warning(f"{result.trigger_info} - {result.threat_categories}")
 ```
