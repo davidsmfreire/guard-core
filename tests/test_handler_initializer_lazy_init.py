@@ -1,3 +1,6 @@
+import asyncio
+import threading
+import time
 from contextlib import contextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -54,18 +57,117 @@ async def test_eager_init_runs_geo_and_cloud() -> None:
     geo_ip.initialize_redis.assert_awaited_once()
 
 
-async def test_lazy_init_skips_geo_and_cloud() -> None:
+async def test_lazy_init_schedules_background_task_for_cloud_and_geo() -> None:
     initializer, geo_ip, _ = _make_initializer(lazy_init=True, block_cloud={"AWS"})
     with _patch_handlers() as patches:
         await initializer.initialize_redis_handlers()
+        assert initializer._lazy_init_task is not None
+        await asyncio.wait_for(initializer._lazy_init_task, timeout=1.0)
+        patches["cloud"].initialize_redis.assert_awaited_once()
+    geo_ip.initialize_redis.assert_awaited_once()
+
+
+async def test_lazy_init_returns_fast_with_slow_background() -> None:  # async-only
+    initializer, geo_ip, _ = _make_initializer(lazy_init=True, block_cloud={"AWS"})
+
+    async def slow_cloud_init(*args: Any, **kwargs: Any) -> None:
+        await asyncio.sleep(5)
+
+    async def slow_geo_init(*args: Any, **kwargs: Any) -> None:
+        await asyncio.sleep(5)
+
+    geo_ip.initialize_redis = AsyncMock(side_effect=slow_geo_init)
+
+    with _patch_handlers() as patches:
+        patches["cloud"].initialize_redis = AsyncMock(side_effect=slow_cloud_init)
+        start = time.perf_counter()
+        await initializer.initialize_redis_handlers()
+        elapsed = time.perf_counter() - start
+
+        assert elapsed < 0.1
+        assert initializer._lazy_init_task is not None
+        assert initializer._lazy_init_task.done() is False
+        initializer._lazy_init_task.cancel()
+        try:
+            await initializer._lazy_init_task
+        except asyncio.CancelledError:
+            pass
+
+
+async def test_lazy_init_returns_quickly_with_blocking_background_init() -> None:
+    initializer, geo_ip, _ = _make_initializer(lazy_init=True, block_cloud={"AWS"})
+
+    release = threading.Event()
+
+    async def blocking_cloud_init(*args: Any, **kwargs: Any) -> None:
+        release.set()
+
+    geo_ip.initialize_redis = AsyncMock(side_effect=blocking_cloud_init)
+
+    with _patch_handlers() as patches:
+        patches["cloud"].initialize_redis = AsyncMock(side_effect=blocking_cloud_init)
+        start = time.perf_counter()
+        await initializer.initialize_redis_handlers()
+        elapsed = time.perf_counter() - start
+
+        assert elapsed < 0.5
+        assert initializer._lazy_init_task is not None
+
+
+async def test_lazy_init_background_task_failure_is_swallowed_and_logged() -> None:
+    initializer, geo_ip, _ = _make_initializer(lazy_init=True, block_cloud={"AWS"})
+    geo_ip.initialize_redis = AsyncMock()
+
+    with _patch_handlers() as patches:
+        patches["cloud"].initialize_redis = AsyncMock(
+            side_effect=RuntimeError("AWS API down")
+        )
+        with patch.object(initializer.logger, "warning") as mock_warning:
+            await initializer.initialize_redis_handlers()
+            assert initializer._lazy_init_task is not None
+            await asyncio.wait_for(initializer._lazy_init_task, timeout=1.0)
+            mock_warning.assert_called_once()
+            geo_ip.initialize_redis.assert_not_awaited()
+
+
+async def test_lazy_init_background_task_runs_geo_only_when_no_cloud_providers() -> (
+    None
+):
+    initializer, geo_ip, _ = _make_initializer(lazy_init=True, block_cloud=None)
+    with _patch_handlers() as patches:
+        await initializer.initialize_redis_handlers()
+        assert initializer._lazy_init_task is not None
+        await asyncio.wait_for(initializer._lazy_init_task, timeout=1.0)
         patches["cloud"].initialize_redis.assert_not_awaited()
-    geo_ip.initialize_redis.assert_not_awaited()
+    geo_ip.initialize_redis.assert_awaited_once()
+
+
+async def test_lazy_init_background_task_runs_cloud_only_when_no_geo_handler() -> None:
+    config = SecurityConfig(
+        lazy_init=True,
+        enable_redis=True,
+        block_cloud_providers={"AWS"},
+    )
+    redis_handler = MagicMock()
+    redis_handler.initialize = AsyncMock()
+    initializer = HandlerInitializer(
+        config=config,
+        redis_handler=redis_handler,
+        geo_ip_handler=None,
+    )
+    with _patch_handlers() as patches:
+        await initializer.initialize_redis_handlers()
+        assert initializer._lazy_init_task is not None
+        await asyncio.wait_for(initializer._lazy_init_task, timeout=1.0)
+        patches["cloud"].initialize_redis.assert_awaited_once()
 
 
 async def test_lazy_init_still_initializes_ipban_and_suspatterns() -> None:
     initializer, _, _ = _make_initializer(lazy_init=True)
     with _patch_handlers() as patches:
         await initializer.initialize_redis_handlers()
+        if initializer._lazy_init_task is not None:
+            await asyncio.wait_for(initializer._lazy_init_task, timeout=1.0)
         patches["ipban"].initialize_redis.assert_awaited_once()
         patches["suspatterns"].initialize_redis.assert_awaited_once()
 

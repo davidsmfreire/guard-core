@@ -106,10 +106,19 @@ SUBS: list[tuple[str, str]] = [
         r"\1\2 = threading.Thread(target=\3, daemon=True)\n\1\2.start()",
     ),
     (r"asyncio\.create_task\((\w+)\)", r"\1"),
+    (r"asyncio\.Task\[[^\]]+\]", "threading.Thread"),
     (r"asyncio\.Task", "threading.Thread"),
     (r"asyncio\.CancelledError", "Exception"),
     (r"asyncio\.gather\(\*(\w+)\)", r"[t() for t in \1]"),
     (r"asyncio\.gather\(", "list(("),
+    (
+        r"await asyncio\.wait_for\(([^,]+),\s*timeout=([^\)]+)\)",
+        r"\1.join(timeout=\2)",
+    ),
+    (
+        r"asyncio\.wait_for\(([^,]+),\s*timeout=([^\)]+)\)",
+        r"\1.join(timeout=\2)",
+    ),
     (r"__aenter__", "__enter__"),
     (r"__aexit__", "__exit__"),
     (r"__aiter__", "__iter__"),
@@ -209,6 +218,14 @@ DOTALL_FIXUPS: list[tuple[str, str]] = [
         "            )\n"
         "            self.update_task.start()\n"
         "            self.logger.info",
+    ),
+    (
+        r"self\._lazy_init_task = threading\.Thread\("
+        r"target=self\._run_lazy_init, args=\(\)\)",
+        "self._lazy_init_task = threading.Thread(\n"
+        "                target=self._run_lazy_init, daemon=True\n"
+        "            )\n"
+        "            self._lazy_init_task.start()",
     ),
     (
         r"def handle_passthrough\(\n\s+self,\n\s+request: SyncGuardRequest,\n\s+call_next: Callable\[\[SyncGuardRequest\], GuardResponse\],\n\s+\) -> GuardResponse \| None:\n\s+if not request\.client_host:\n\s+response = call_next\(request\)\n\s+return self\.context\.response_factory\.apply_modifier\(response\)\n\n\s+if self\.context\.validator\.is_path_excluded\(request\):\n\s+response = call_next\(request\)\n\s+return self\.context\.response_factory\.apply_modifier\(response\)\n\n\s+return None",  # noqa: E501

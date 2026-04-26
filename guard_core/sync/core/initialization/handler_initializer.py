@@ -1,3 +1,5 @@
+import logging
+import threading
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -26,6 +28,8 @@ class HandlerInitializer:
         self.event_filter: Any = None
         self.enricher: Any = None
         self.behavior_tracker: Any = None
+        self._lazy_init_task: threading.Thread | None = None
+        self.logger = logging.getLogger("guard_core.sync.core.initialization")
 
     def build_enricher(self) -> Any | None:
         if not self.config.enable_enrichment:
@@ -114,6 +118,23 @@ class HandlerInitializer:
             event_filter=self.event_filter,
         )
 
+    def _run_lazy_init(self) -> None:
+        try:
+            from guard_core.sync.handlers.cloud_handler import cloud_handler
+
+            if self.config.block_cloud_providers:
+                cloud_handler.initialize_redis(
+                    self.redis_handler,
+                    self.config.block_cloud_providers,
+                    ttl=self.config.cloud_ip_refresh_interval,
+                )
+            if self.geo_ip_handler is not None:
+                self.geo_ip_handler.initialize_redis(self.redis_handler)
+        except Exception as e:
+            self.logger.warning(
+                "Lazy background initialization failed: %s", e, exc_info=True
+            )
+
     def initialize_redis_handlers(self) -> None:
         if not (self.config.enable_redis and self.redis_handler):
             return
@@ -124,17 +145,22 @@ class HandlerInitializer:
         from guard_core.sync.handlers.ipban_handler import ip_ban_manager
         from guard_core.sync.handlers.suspatterns_handler import sus_patterns_handler
 
-        if not self.config.lazy_init and self.config.block_cloud_providers:
-            cloud_handler.initialize_redis(
-                self.redis_handler,
-                self.config.block_cloud_providers,
-                ttl=self.config.cloud_ip_refresh_interval,
+        if self.config.lazy_init:
+            self._lazy_init_task = threading.Thread(
+                target=self._run_lazy_init, daemon=True
             )
+            self._lazy_init_task.start()
+        else:
+            if self.config.block_cloud_providers:
+                cloud_handler.initialize_redis(
+                    self.redis_handler,
+                    self.config.block_cloud_providers,
+                    ttl=self.config.cloud_ip_refresh_interval,
+                )
+            if self.geo_ip_handler is not None:
+                self.geo_ip_handler.initialize_redis(self.redis_handler)
 
         ip_ban_manager.initialize_redis(self.redis_handler)
-
-        if not self.config.lazy_init and self.geo_ip_handler is not None:
-            self.geo_ip_handler.initialize_redis(self.redis_handler)
 
         if self.rate_limit_handler is not None:
             self.rate_limit_handler.initialize_redis(self.redis_handler)

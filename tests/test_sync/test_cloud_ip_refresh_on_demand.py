@@ -8,11 +8,11 @@ from guard_core.sync.core.checks.implementations.cloud_ip_refresh import (
 from guard_core.sync.handlers.cloud_handler import cloud_handler
 
 
-def test_lazy_init_triggers_initial_refresh_when_ranges_empty() -> None:
+def test_lazy_init_does_not_trigger_sync_refresh_in_check() -> None:
     config = SecurityConfig(lazy_init=True, block_cloud_providers={"AWS"})
     middleware = MagicMock()
     middleware.config = config
-    middleware.last_cloud_ip_refresh = 0
+    middleware.last_cloud_ip_refresh = 9999999999
     middleware.refresh_cloud_ip_ranges = MagicMock()
 
     cloud_handler.ip_ranges["AWS"] = set()
@@ -20,7 +20,8 @@ def test_lazy_init_triggers_initial_refresh_when_ranges_empty() -> None:
     check = CloudIpRefreshCheck(middleware)
     with patch.object(cloud_handler, "refresh_async", new=MagicMock()) as mock_refresh:
         check.check(MagicMock())
-        mock_refresh.assert_called_once()
+        mock_refresh.assert_not_called()
+    middleware.refresh_cloud_ip_ranges.assert_not_called()
 
 
 def test_eager_init_does_not_trigger_on_demand_refresh() -> None:
@@ -36,6 +37,7 @@ def test_eager_init_does_not_trigger_on_demand_refresh() -> None:
     with patch.object(cloud_handler, "refresh_async", new=MagicMock()) as mock_refresh:
         check.check(MagicMock())
         mock_refresh.assert_not_called()
+    middleware.refresh_cloud_ip_ranges.assert_not_called()
 
 
 def test_scheduled_refresh_still_fires_when_interval_elapsed() -> None:
@@ -69,24 +71,20 @@ def test_lazy_init_with_empty_block_cloud_returns_immediately() -> None:
     middleware.refresh_cloud_ip_ranges.assert_not_called()
 
 
-def test_lazy_init_skips_refresh_when_ranges_already_populated() -> None:
+def test_lazy_init_scheduled_refresh_fires_when_interval_elapsed() -> None:
     config = SecurityConfig(
         lazy_init=True,
         block_cloud_providers={"AWS"},
-        cloud_ip_refresh_interval=300,
+        cloud_ip_refresh_interval=60,
     )
     middleware = MagicMock()
     middleware.config = config
-    middleware.last_cloud_ip_refresh = 9999999999
+    middleware.last_cloud_ip_refresh = 0
     middleware.refresh_cloud_ip_ranges = MagicMock()
 
-    cloud_handler.ip_ranges["AWS"] = {ipaddress.ip_network("10.0.0.0/8")}
-
     check = CloudIpRefreshCheck(middleware)
-    with patch.object(cloud_handler, "refresh_async", new=MagicMock()) as mock_refresh:
-        check.check(MagicMock())
-        mock_refresh.assert_not_called()
-    middleware.refresh_cloud_ip_ranges.assert_not_called()
+    check.check(MagicMock())
+    middleware.refresh_cloud_ip_ranges.assert_called_once()
 
 
 def test_handler_initializer_wires_user_supplied_store() -> None:

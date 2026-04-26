@@ -175,13 +175,13 @@ These fields tune cold-start and horizontal-scale behaviour for the geo-IP and c
 
 | Field                | Type                            | Default | Description                                                                  |
 |----------------------|---------------------------------|---------|------------------------------------------------------------------------------|
-| `lazy_init`          | `bool`                          | `False` | Defer IPInfo MMDB download and cloud-IP fetches until the first request.     |
+| `lazy_init`          | `bool`                          | `False` | Run the IPInfo MMDB download and cloud-IP provider fetches as a background task during startup instead of awaiting them inline. Cloud and geo layers are inert until the task completes. |
 | `geo_ip_db_max_age`  | `int`                           | `86400` | Maximum age in seconds for the IPInfo MMDB before re-download. Range 3600 - 604800. |
 | `cloud_ip_store`     | `CloudIpStoreProtocol \| None`  | `None`  | Pluggable cloud-IP backend. `None` uses the in-memory default; auto-upgraded to Redis when Redis is enabled. |
 
 When to use:
 
-- `lazy_init=True` for environments where slow boot is worse than slow first request (FaaS cold starts, dev containers, CI).
+- `lazy_init=True` to keep startup non-blocking when IPInfo MMDB or cloud-IP provider fetches are slow. The background warmup runs concurrently with normal request handling; cloud-provider blocking and geo checks become active once the background task finishes. Rate limiting, IP banning, pattern detection, and other layers remain fully active throughout the warmup window. Pair with a Kubernetes/ALB warmup probe if your deployment cannot tolerate any inert window.
 - `geo_ip_db_max_age` to tighten or loosen the IPInfo refresh cadence — match it to your IPInfo plan's update frequency.
 - `cloud_ip_store` to point multiple horizontally-scaled instances at a single pre-populated Redis namespace, skipping per-instance cloud-IP cold starts.
 

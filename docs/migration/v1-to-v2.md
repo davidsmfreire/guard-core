@@ -100,7 +100,7 @@ These additions ship in v2.0.0 but do not require any migration:
 - `enabled_detection_categories` defaults to the full `ALL_DETECTION_CATEGORIES` set.
 - `threat_ban_config` defaults to `{}` and falls back to the existing flat `auto_ban_threshold` / `auto_ban_duration` policy.
 - `global_behavior_rules` defaults to `[]`.
-- `lazy_init` defaults to `False` (eager bootstrap unchanged).
+- `lazy_init` defaults to `False` (eager bootstrap unchanged). When set to `True`, the IPInfo MMDB download and cloud-IP fetches run as a background task during startup; the first request is no longer blocked while they complete (changed in v2.1.0).
 - `geo_ip_db_max_age` defaults to `86400` (matches the old hardcoded value).
 - `cloud_ip_store=None` uses the in-memory store, auto-upgraded to Redis when Redis is enabled.
 

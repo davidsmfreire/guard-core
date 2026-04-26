@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 
 ___
 
+v2.1.0 (2026-04-25)
+-------------------
+
+lazy_init: background warmup instead of first-request stall
+-----------------------------------------------------------
+
+### Changed
+
+- `lazy_init=True` now schedules the IPInfo MMDB download and cloud-IP provider fetches as a background task during `initialize_redis_handlers()`, instead of triggering them synchronously on the first request that needs them. Eliminates the multi-second latency spike on the first user request. During the warmup window (typically a few seconds at startup), cloud-provider blocking and country-based geo checks are inert; rate limiting, IP banning, pattern detection, and all other security layers remain fully active. After the background task completes, the geo/cloud layers activate seamlessly.
+- `HandlerInitializer` exposes `_lazy_init_task`, the `asyncio.Task` (or `threading.Thread` in the sync mirror) that runs the deferred cloud and geo bootstrap when `lazy_init=True`. Failures inside the background task are caught and logged via `logging.getLogger("guard_core.core.initialization")` (`guard_core.sync.core.initialization` for the sync mirror) at `WARNING` level; they never propagate.
+- `CloudIpRefreshCheck.check()` no longer triggers a synchronous `cloud_handler.refresh_async(...)` when ranges are empty under `lazy_init=True`. The interval-based scheduled refresh path is now the only refresh path inside the request lifecycle.
+
+### Compat notes
+
+- `lazy_init=False` (the default) is unchanged — eager init at startup.
+- Users who opted into `lazy_init=True` in 2.0.0 see only an upside: the first-request latency that 2.0.0 imposed is replaced with a brief startup-time warmup window where cloud/geo layers are inert. No code changes required.
+- `lazy_init=True` users with strict cloud-provider blocking who can't tolerate any warmup window should stay on `lazy_init=False` (or continue using `lazy_init=True` with a Kubernetes/ALB warmup probe that hits a health endpoint before real traffic).
+
+___
+
 v2.0.0 (2026-04-25)
 -------------------
 

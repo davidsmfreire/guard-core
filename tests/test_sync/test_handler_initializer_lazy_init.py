@@ -1,3 +1,5 @@
+import threading
+import time
 from contextlib import contextmanager
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -56,18 +58,88 @@ def test_eager_init_runs_geo_and_cloud() -> None:
     geo_ip.initialize_redis.assert_called_once()
 
 
-def test_lazy_init_skips_geo_and_cloud() -> None:
+def test_lazy_init_schedules_background_task_for_cloud_and_geo() -> None:
     initializer, geo_ip, _ = _make_initializer(lazy_init=True, block_cloud={"AWS"})
     with _patch_handlers() as patches:
         initializer.initialize_redis_handlers()
+        assert initializer._lazy_init_task is not None
+        initializer._lazy_init_task.join(timeout=1.0)
+        patches["cloud"].initialize_redis.assert_called_once()
+    geo_ip.initialize_redis.assert_called_once()
+
+
+def test_lazy_init_returns_quickly_with_blocking_background_init() -> None:
+    initializer, geo_ip, _ = _make_initializer(lazy_init=True, block_cloud={"AWS"})
+
+    release = threading.Event()
+
+    def blocking_cloud_init(*args: Any, **kwargs: Any) -> None:
+        release.set()
+
+    geo_ip.initialize_redis = MagicMock(side_effect=blocking_cloud_init)
+
+    with _patch_handlers() as patches:
+        patches["cloud"].initialize_redis = MagicMock(side_effect=blocking_cloud_init)
+        start = time.perf_counter()
+        initializer.initialize_redis_handlers()
+        elapsed = time.perf_counter() - start
+
+        assert elapsed < 0.5
+        assert initializer._lazy_init_task is not None
+
+
+def test_lazy_init_background_task_failure_is_swallowed_and_logged() -> None:
+    initializer, geo_ip, _ = _make_initializer(lazy_init=True, block_cloud={"AWS"})
+    geo_ip.initialize_redis = MagicMock()
+
+    with _patch_handlers() as patches:
+        patches["cloud"].initialize_redis = MagicMock(
+            side_effect=RuntimeError("AWS API down")
+        )
+        with patch.object(initializer.logger, "warning") as mock_warning:
+            initializer.initialize_redis_handlers()
+            assert initializer._lazy_init_task is not None
+            initializer._lazy_init_task.join(timeout=1.0)
+            mock_warning.assert_called_once()
+            geo_ip.initialize_redis.assert_not_called()
+
+
+def test_lazy_init_background_task_runs_geo_only_when_no_cloud_providers() -> None:
+    initializer, geo_ip, _ = _make_initializer(lazy_init=True, block_cloud=None)
+    with _patch_handlers() as patches:
+        initializer.initialize_redis_handlers()
+        assert initializer._lazy_init_task is not None
+        initializer._lazy_init_task.join(timeout=1.0)
         patches["cloud"].initialize_redis.assert_not_called()
-    geo_ip.initialize_redis.assert_not_called()
+    geo_ip.initialize_redis.assert_called_once()
+
+
+def test_lazy_init_background_task_runs_cloud_only_when_no_geo_handler() -> None:
+    config = SecurityConfig(
+        lazy_init=True,
+        enable_redis=True,
+        block_cloud_providers={"AWS"},
+    )
+    redis_handler = MagicMock()
+    redis_handler.initialize = MagicMock()
+    initializer = HandlerInitializer(
+        config=config,
+        redis_handler=redis_handler,
+        geo_ip_handler=None,
+    )
+    with _patch_handlers() as patches:
+        initializer.initialize_redis_handlers()
+        assert initializer._lazy_init_task is not None
+        initializer._lazy_init_task.join(timeout=1.0)
+        patches["cloud"].initialize_redis.assert_called_once()
 
 
 def test_lazy_init_still_initializes_ipban_and_suspatterns() -> None:
     initializer, _, _ = _make_initializer(lazy_init=True)
     with _patch_handlers() as patches:
         initializer.initialize_redis_handlers()
+        if initializer._lazy_init_task is not None:
+            initializer._lazy_init_task.join(timeout=1.0)
         patches["ipban"].initialize_redis.assert_called_once()
         patches["suspatterns"].initialize_redis.assert_called_once()
 
