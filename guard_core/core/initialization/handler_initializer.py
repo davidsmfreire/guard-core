@@ -142,6 +142,9 @@ class HandlerInitializer:
         from guard_core.handlers.ipban_handler import ip_ban_manager
         from guard_core.handlers.suspatterns_handler import sus_patterns_handler
 
+        if self.config.cloud_ip_store is not None:
+            cloud_handler.set_store(self.config.cloud_ip_store)
+
         if self.config.lazy_init:
             self._lazy_init_task = asyncio.create_task(self._run_lazy_init())
         else:
@@ -159,9 +162,6 @@ class HandlerInitializer:
         if self.rate_limit_handler is not None:
             await self.rate_limit_handler.initialize_redis(self.redis_handler)
         await sus_patterns_handler.initialize_redis(self.redis_handler)
-
-        if self.config.cloud_ip_store is not None:
-            cloud_handler.set_store(self.config.cloud_ip_store)
 
     async def initialize_agent_for_handlers(self) -> None:
         telemetry = self.composite_handler or self.agent_handler

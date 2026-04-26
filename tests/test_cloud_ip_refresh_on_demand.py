@@ -104,14 +104,67 @@ async def test_handler_initializer_wires_user_supplied_store() -> None:
         redis_handler=redis_handler,
     )
 
+    call_order: list[str] = []
+
+    def _record_set_store(*_args: object, **_kwargs: object) -> None:
+        call_order.append("set_store")
+
+    async def _record_initialize_redis(*_args: object, **_kwargs: object) -> None:
+        call_order.append("initialize_redis")
+
     with (
         patch("guard_core.handlers.cloud_handler.cloud_handler") as cloud,
         patch("guard_core.handlers.ipban_handler.ip_ban_manager") as ipban,
         patch("guard_core.handlers.suspatterns_handler.sus_patterns_handler") as sus,
     ):
-        cloud.initialize_redis = AsyncMock()
-        cloud.set_store = MagicMock()
+        cloud.initialize_redis = AsyncMock(side_effect=_record_initialize_redis)
+        cloud.set_store = MagicMock(side_effect=_record_set_store)
         ipban.initialize_redis = AsyncMock()
         sus.initialize_redis = AsyncMock()
         await initializer.initialize_redis_handlers()
         cloud.set_store.assert_called_once_with(custom_store)
+        assert call_order == ["set_store", "initialize_redis"]
+
+
+async def test_handler_initializer_user_store_wired_before_lazy_task() -> None:
+    import asyncio
+
+    from guard_core.core.initialization.handler_initializer import HandlerInitializer
+    from guard_core.handlers.cloud_ip_stores import InMemoryCloudIpStore
+
+    custom_store = InMemoryCloudIpStore()
+    config = SecurityConfig(
+        enable_redis=True,
+        lazy_init=True,
+        block_cloud_providers={"AWS"},
+        cloud_ip_store=custom_store,
+    )
+    redis_handler = MagicMock()
+    redis_handler.initialize = AsyncMock()
+    initializer = HandlerInitializer(
+        config=config,
+        redis_handler=redis_handler,
+    )
+
+    call_order: list[str] = []
+
+    def _record_set_store(*_args: object, **_kwargs: object) -> None:
+        call_order.append("set_store")
+
+    async def _record_initialize_redis(*_args: object, **_kwargs: object) -> None:
+        call_order.append("initialize_redis")
+
+    with (
+        patch("guard_core.handlers.cloud_handler.cloud_handler") as cloud,
+        patch("guard_core.handlers.ipban_handler.ip_ban_manager") as ipban,
+        patch("guard_core.handlers.suspatterns_handler.sus_patterns_handler") as sus,
+    ):
+        cloud.initialize_redis = AsyncMock(side_effect=_record_initialize_redis)
+        cloud.set_store = MagicMock(side_effect=_record_set_store)
+        ipban.initialize_redis = AsyncMock()
+        sus.initialize_redis = AsyncMock()
+        await initializer.initialize_redis_handlers()
+        assert initializer._lazy_init_task is not None
+        await asyncio.wait_for(initializer._lazy_init_task, timeout=1.0)
+        cloud.set_store.assert_called_once_with(custom_store)
+        assert call_order == ["set_store", "initialize_redis"]
