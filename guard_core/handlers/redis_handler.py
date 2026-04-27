@@ -22,11 +22,12 @@ class RedisManager:
     agent_handler: Any = None
 
     def __new__(cls: type["RedisManager"], config: SecurityConfig) -> "RedisManager":
-        cls._instance = super().__new__(cls)
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance.logger = logging.getLogger("guard_core.handlers.redis")
+            cls._instance.agent_handler = None
         cls._instance.config = config
-        cls._instance.logger = logging.getLogger("guard_core.handlers.redis")
         cls._instance._closed = False
-        cls._instance.agent_handler = None
         return cls._instance
 
     async def initialize_agent(self, agent_handler: Any) -> None:
@@ -54,9 +55,11 @@ class RedisManager:
             self.logger.error(f"Failed to send Redis event to agent: {e}")
 
     async def initialize(self) -> None:
-        if self._closed or not self.config.enable_redis:
+        if not self.config.enable_redis:
             self._redis = None
             return
+
+        self._closed = False
 
         async with self._connection_lock:
             try:

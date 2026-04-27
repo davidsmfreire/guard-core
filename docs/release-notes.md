@@ -10,6 +10,19 @@ Release Notes
 
 ___
 
+v2.2.1 (2026-04-27)
+-------------------
+
+RedisManager singleton hardening (v2.2.1)
+-----------------------------------------
+
+- **Fixed** — `RedisManager.__new__` always created a new instance and overwrote the class-level `_instance` reference, breaking the singleton contract. When middleware or a fixture called `RedisManager(config)` more than once, each successive call orphaned the previous instance — but each instance owned an independent `_redis` connection set by its own `initialize()`. The orphaned connection had no closer; on garbage collection it surfaced as `ResourceWarning: unclosed Connection` (and the underlying socket / asyncio transport). Under `pytest -W error` this manifested as cascading `PytestUnraisableExceptionWarning` failures across any test suite that constructed `RedisManager` more than once.
+- `__new__` now follows the same true-singleton pattern as `RateLimitManager`: create the instance once, update `config` on every call, return the same instance. Connections are owned by a single live instance and `close()` actually closes them.
+- Mirror fix applied to `guard_core.sync.handlers.redis_handler.RedisManager`.
+- No behavior change for production callers that construct `RedisManager` once at startup. Test suites that previously leaked redis connections across fixtures now run clean under `-W error`.
+
+___
+
 v2.1.0 (2026-04-25)
 -------------------
 
