@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 
 ___
 
+v2.2.2 (2026-04-29)
+-------------------
+
+Safer failures, observability, and truthful copy (v2.2.2)
+---------------------------------------------------------
+
+- **Fixed** — Decode iteration cap raised from 3 to 7 in `ContentPreprocessor.decode_common_encodings` to cover up to 7-layer polyglot encoding evasion (`base64(base64(base64(base64(payload))))` and similar). The loop still terminates on `if content == original: break`, so it stays bounded. Sync mirror updated in lockstep.
+- **Fixed** — `IPInfoManager.get_country` no longer raises `RuntimeError("Database not initialized")` when the MaxMind reader is unset; it now logs a WARNING and returns `None`. Callers no longer need to wrap every geo lookup in a defensive `try/except`. Sync mirror.
+- **Fixed** — `ErrorResponseFactory.apply_modifier` catches exceptions raised by the user-supplied `custom_response_modifier`, logs via `logger.exception`, and returns the unmodified response. A buggy modifier can no longer crash the request pipeline. Sync mirror.
+- **Added** — `IPBanManager.banned_ips` is now an `_ObservableTTLCache` that exposes `evictions_count` on the manager and emits a WARNING every 100 overflow evictions. Only overflow evictions are counted; TTL-expiry deletions are excluded (verified against `cachetools` source — `expire()` uses `Cache.__delitem__`, not `popitem`). Sync mirror.
+- **Added** — `HandlerInitializer.initialize_dynamic_rule_manager` emits a WARNING when `enable_dynamic_rules=True` but no agent handler is reachable, so the silent fall-back to static config is now visible to operators. The opt-out path (`enable_dynamic_rules=False`) remains silent. Sync mirror.
+- **Changed** — README and CHANGELOG copy aligned with what the engine actually does. Replaced "intelligent / behavioral analysis / anomaly detection / penetration detection" framing with signature-based detection plus multi-metric semantic scoring. Added a "How Detection Works" section to the README walking through the decode → regex match → semantic-score → ReDoS-guard pipeline.
+
+___
+
 v2.2.1 (2026-04-27)
 -------------------
 
@@ -364,7 +379,7 @@ v0.1.0 (2026-03-23)
 - **IP Management**: Whitelisting, blacklisting, geolocation, cloud provider blocking.
 - **Rate Limiting**: Sliding window algorithm with in-memory and Redis backends.
 - **Penetration Detection**: Enhanced detection engine with pattern matching, semantic analysis, and performance monitoring.
-- **Security Decorators**: Route-level security controls for access control, authentication, rate limiting, behavioral analysis, content filtering, and advanced features.
+- **Security Decorators**: Route-level security controls for access control, authentication, rate limiting, threshold-based behavior rules, content filtering, and advanced features.
 - **Security Headers**: Comprehensive HTTP security header management following OWASP best practices.
 - **Redis Integration**: Distributed state management for multi-instance deployments.
-- **Behavioral Analysis**: Usage monitoring, return pattern detection, and frequency analysis.
+- **Threshold-Based Behavior Tracking**: Per-IP request counting, response-pattern matching, and suspicious-frequency triggers (deterministic threshold matching, not learning-based).
