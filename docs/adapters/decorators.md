@@ -39,7 +39,7 @@ class RouteConfig:
         self.blocked_user_agents: list[str] = []
         self.required_headers: dict[str, str] = {}
         self.behavior_rules: list[BehaviorRule] = []
-        self.block_cloud_providers: set[str] = set()
+        self.block_cloud_providers: set[Literal["AWS", "GCP", "Azure"]] = set()
         self.max_request_size: int | None = None
         self.allowed_content_types: list[str] | None = None
         self.time_restrictions: dict[str, str] | None = None
