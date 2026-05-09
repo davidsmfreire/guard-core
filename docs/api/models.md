@@ -89,7 +89,7 @@ class SecurityConfig(BaseModel):
     cors_expose_headers: list[str] = Field(default_factory=list)
     cors_max_age: int = Field(default=600)
 
-    block_cloud_providers: set[str] | None = Field(default=None)
+    block_cloud_providers: set[Literal["AWS", "GCP", "Azure"]] | None = Field(default=None)
     cloud_ip_refresh_interval: int = Field(default=3600, ge=60, le=86400)
     cloud_ip_store: CloudIpStoreProtocol | None = Field(default=None)
 

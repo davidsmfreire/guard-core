@@ -212,7 +212,7 @@ class SecurityConfig(BaseModel):
         default=600, description="Maximum age of CORS preflight results"
     )
 
-    block_cloud_providers: set[str] | None = Field(
+    block_cloud_providers: set[Literal["AWS", "GCP", "Azure"]] | None = Field(
         default=None, description="Set of cloud provider names to block"
     )
 
