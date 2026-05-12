@@ -67,48 +67,79 @@ class RedisCloudIpStore:
     def __init__(
         self,
         redis_handler: RedisHandlerProtocol,
-        key_prefix: str = "guard:cloud_ip",
+        key_prefix: str = "cloud_ip",
     ) -> None: ...
     async def get(self, provider: str) -> set[str] | None: ...
     async def set(self, provider: str, ranges: set[str], ttl: int | None = None) -> None: ...
     async def clear(self) -> None: ...
 ```
 
-Redis-backed store. Each provider's CIDR set is JSON-encoded as a sorted list and written under `guard:cloud_ip:<provider>`. `set()` honors the optional `ttl`. `clear()` removes every key under the configured prefix.
+Redis-backed store. Each provider's CIDR set is JSON-encoded as a sorted list and written under `<redis_prefix><key_prefix>:<provider>` (the `RedisManager.set_key` path already prepends `config.redis_prefix`, so `key_prefix` should not duplicate it). `set()` honors the optional `ttl`. `clear()` removes every key under the resolved prefix.
 
 ___
 
-When to swap stores
--------------------
+Backends
+--------
 
-- **Default** — leave `SecurityConfig.cloud_ip_store=None`. Guard-core uses `InMemoryCloudIpStore`.
-- **Auto-upgrade to Redis** — when Redis is enabled (`enable_redis=True` and a `RedisManager` is wired through `HandlerInitializer`), the cloud manager transparently uses Redis-backed caching via the configured prefix.
-- **Explicit override** — for horizontally-scaled deployments that want every instance reading from a single pre-populated namespace (or to use a custom backend like an SQL store), pass an explicit store:
+### Default (auto-constructed)
+
+When `enable_redis=True` and `block_cloud_providers` is set, guard-core automatically wires a `RedisCloudIpStore` during `HandlerInitializer.initialize_redis_handlers()` so cloud-IP ranges persist across worker restarts and stay shared across replicas. No `cloud_ip_store=` setting is required.
 
 ```python
-from guard_core.handlers.cloud_ip_stores import RedisCloudIpStore
-from guard_core.handlers.redis_handler import RedisManager
 from guard_core.models import SecurityConfig
 
-redis = RedisManager(SecurityConfig())
 config = SecurityConfig(
-    cloud_ip_store=RedisCloudIpStore(redis, key_prefix="guard:cloud_ip"),
+    enable_redis=True,
+    redis_url="redis://localhost:6379",
+    redis_prefix="myapp:guard:",
+    block_cloud_providers={"AWS", "GCP", "Azure"},
 )
 ```
 
-When `cloud_ip_store` is explicit, the `HandlerInitializer.initialize_redis_handlers()` path wires it into `cloud_handler.set_store(...)` after Redis bootstrap. Lazy bootstrap (`lazy_init=True`) defers the first cloud-IP fetch until the first request that needs it.
+Cloud-IP ranges land at Redis keys like `myapp:guard:cloud_ip:AWS`. The redundant `guard:` segment in the previous `key_prefix` default was removed in this release (see CHANGELOG); `RedisManager.set_key` already prepends `redis_prefix`, so the `key_prefix` no longer duplicates it.
+
+When `enable_redis=False` (or no Redis URL is reachable), the same path falls back to `InMemoryCloudIpStore` — fine for single-process deployments, lost on restart.
+
+### Custom prefix or implementation via callable
+
+`cloud_ip_store` accepts a `CloudIpStoreFactory` callable: `Callable[[RedisHandlerProtocol], CloudIpStoreProtocol]`. The handler initializer invokes it with the live Redis handler once Redis is up, so user code never has to construct a throwaway `RedisManager` purely to feed the store.
+
+```python
+from guard_core.handlers.cloud_ip_stores import RedisCloudIpStore
+from guard_core.models import SecurityConfig
+
+config = SecurityConfig(
+    enable_redis=True,
+    redis_url="redis://localhost:6379",
+    cloud_ip_store=lambda redis: RedisCloudIpStore(redis, key_prefix="cloud_ip_v2"),
+)
+```
+
+### Custom non-Redis implementation via instance
+
+If the store does not need a Redis handle (in-memory, DynamoDB, SQL, etc.), pass an instance directly:
+
+```python
+from guard_core.models import SecurityConfig
+
+config = SecurityConfig(
+    cloud_ip_store=MyDynamoDBCloudIpStore(table_name="cloud_ips"),
+)
+```
+
+The instance is wired straight into `cloud_handler.set_store(...)` after Redis bootstrap. Combined with `lazy_init=True` (the default), the first cloud-IP fetch happens in a background task — application startup does not block on it.
 
 ___
 
 Redis namespace migration
 -------------------------
 
-The v2.0.0 release moved the cloud-IP cache from the legacy `cloud_ranges` namespace (comma-separated CSV values per provider) to `guard:cloud_ip` (JSON-encoded sorted list per provider).
+The v2.0.0 release moved the cloud-IP cache from the legacy `cloud_ranges` namespace (comma-separated CSV values per provider) to `cloud_ip` (JSON-encoded sorted list per provider, prefixed by `redis_prefix`).
 
-- **Default writers** — `RedisCloudIpStore` writes to `guard:cloud_ip:<provider>`.
+- **Default writers** — `RedisCloudIpStore` writes to `<redis_prefix>cloud_ip:<provider>`.
 - **Legacy reader** — when `CloudManager._store is None` (no `cloud_ip_store` configured and Redis is not auto-wired), the legacy CSV path under `cloud_ranges` is still reachable, but the default and the Redis store both use the new namespace.
 
-Any ops tooling, dashboards, or sidecars reading those Redis keys directly must switch to the new namespace.
+Any ops tooling, dashboards, or sidecars reading those Redis keys directly must switch to the new namespace. On upgrade from a previous release, the cache invalidates once and repopulates within `cloud_ip_refresh_interval`.
 
 ___
 

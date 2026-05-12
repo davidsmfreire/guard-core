@@ -35,8 +35,8 @@ class SecurityConfig(BaseModel):
 
     whitelist: list[str] | None = Field(default=None)
     blacklist: list[str] = Field(default_factory=list)
-    whitelist_countries: list[str] = Field(default_factory=list)
-    blocked_countries: list[str] = Field(default_factory=list)
+    whitelist_countries: frozenset[str] = Field(default_factory=frozenset)
+    blocked_countries: frozenset[str] = Field(default_factory=frozenset)
     blocked_user_agents: list[str] = Field(default_factory=list)
 
     auto_ban_threshold: int = Field(default=10)
@@ -89,11 +89,13 @@ class SecurityConfig(BaseModel):
     cors_expose_headers: list[str] = Field(default_factory=list)
     cors_max_age: int = Field(default=600)
 
-    block_cloud_providers: set[Literal["AWS", "GCP", "Azure"]] | None = Field(default=None)
+    block_cloud_providers: set[CloudProvider] | None = Field(default=None)
     cloud_ip_refresh_interval: int = Field(default=3600, ge=60, le=86400)
-    cloud_ip_store: CloudIpStoreProtocol | None = Field(default=None)
+    cloud_ip_store: CloudIpStoreProtocol | CloudIpStoreFactory | None = Field(
+        default=None
+    )
 
-    lazy_init: bool = Field(default=False)
+    lazy_init: bool = Field(default=True)
     geo_ip_db_max_age: int = Field(default=86400, ge=3600, le=604800)
 
     exclude_paths: list[str] = Field(
@@ -171,7 +173,8 @@ class SecurityConfig(BaseModel):
 | `validate_ip_lists` | `whitelist`, `blacklist` | Validates IP addresses and CIDR ranges |
 | `validate_trusted_proxies` | `trusted_proxies` | Validates proxy IP addresses and CIDR ranges |
 | `validate_proxy_depth` | `trusted_proxy_depth` | Ensures depth is at least 1 |
-| `validate_cloud_providers` | `block_cloud_providers` | Filters to valid providers: AWS, GCP, Azure |
+| `validate_cloud_providers` | `block_cloud_providers` | Filters to entries present in `VALID_CLOUD_PROVIDERS` (derived from the `CloudProvider` Literal: AWS, GCP, Azure). |
+| `coerce_country_set` | `whitelist_countries`, `blocked_countries` | Accepts list/tuple/set/frozenset, normalizes each entry to uppercase, returns `frozenset[str]`. |
 | `validate_enabled_detection_categories` | `enabled_detection_categories` | Rejects unknown labels (must be a subset of `ALL_DETECTION_CATEGORIES`) |
 | `validate_threat_ban_config` | `threat_ban_config` | Rejects unknown category keys |
 | `validate_geo_ip_handler_exists` | model-level | Requires `geo_ip_handler` when country filtering is configured |
@@ -214,11 +217,22 @@ See [Behavior Rules](behavior-rules.md) for `BehaviorRuleConfig` details and the
 
 These fields tune how guard-core bootstraps geo-IP and cloud-IP data. They are inert by default and only matter for cold-start tuning or horizontal-scale deployments.
 
-| Field                | Type                          | Default | Description                                                      |
-|----------------------|-------------------------------|---------|------------------------------------------------------------------|
-| `lazy_init`          | `bool`                        | `False` | Defer IPInfo MMDB download and cloud-IP fetches until first request. |
-| `geo_ip_db_max_age`  | `int`                         | `86400` | Maximum age in seconds for IPInfo MMDB before re-download (3600 - 604800). |
-| `cloud_ip_store`     | `CloudIpStoreProtocol \| None` | `None` | Pluggable cloud-IP backend. `None` uses the in-memory default. |
+| Field                | Type                                                          | Default | Description                                                      |
+|----------------------|---------------------------------------------------------------|---------|------------------------------------------------------------------|
+| `lazy_init`          | `bool`                                                        | `True`  | When `True` (default), cloud-IP HTTP fetches and IPInfo MMDB downloads run in a background task started at app boot so startup does not block on multi-second network calls. First requests may see partially-populated cloud-IP ranges until the background task finishes (typically 1-3 seconds). Set to `False` to restore synchronous-init behavior — `initialize_redis_handlers` then awaits all initial network calls before returning. |
+| `geo_ip_db_max_age`  | `int`                                                         | `86400` | Maximum age in seconds for IPInfo MMDB before re-download (3600 - 604800). |
+| `cloud_ip_store`     | `CloudIpStoreProtocol \| CloudIpStoreFactory \| None`         | `None`  | Override for the cloud-IP backend. Accepts either a ready instance implementing `CloudIpStoreProtocol`, or a `CloudIpStoreFactory` callable `(RedisHandlerProtocol) -> CloudIpStoreProtocol` invoked once the Redis handler is built. When `None` (default), guard-core auto-constructs a `RedisCloudIpStore` if `enable_redis=True`, else falls back to `InMemoryCloudIpStore`. |
+
+### Cloud Provider Constants
+
+`guard_core.models` exports two related symbols for cloud-provider validation:
+
+| Symbol                  | Type                       | Description                                                                 |
+|-------------------------|----------------------------|-----------------------------------------------------------------------------|
+| `CloudProvider`         | `Literal["AWS", "GCP", "Azure"]` | Type alias used in the `block_cloud_providers` annotation. Single source of truth for valid provider names. |
+| `VALID_CLOUD_PROVIDERS` | `frozenset[str]`           | Runtime guard set derived from `typing.get_args(CloudProvider)`. Used by `validate_cloud_providers`, `DynamicRules.blocked_cloud_providers` filtering, and the `@block_clouds` decorator. |
+
+Adding a new provider is a one-line edit to the `CloudProvider` Literal — every consumer picks up the change automatically.
 
 See [Cloud IP Store](cloud-ip-store.md) for the protocol contract and the in-memory / Redis implementations.
 

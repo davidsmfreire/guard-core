@@ -246,7 +246,7 @@ async def test_check_ip_country_no_countries_configured(
     mock_ipinfo.reader = True
     mock_ipinfo.get_country.return_value = "US"
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.DEBUG):
         result = await check_ip_country("1.1.1.1", config, mock_ipinfo)
         assert not result
         assert "No countries blocked or whitelisted" in caplog.text

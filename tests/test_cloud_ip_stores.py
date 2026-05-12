@@ -354,3 +354,26 @@ async def test_cloud_manager_legacy_redis_path_skips_write_when_fetch_returns_em
     monkeypatch.setattr("guard_core.handlers.cloud_handler.fetch_aws_ip_ranges", empty)
     await mgr.refresh_async({"AWS"})
     redis_handler.set_key.assert_not_awaited()
+
+
+def test_redis_cloud_ip_store_default_key_prefix_is_unprefixed() -> None:
+    redis_handler = AsyncMock()
+    store = RedisCloudIpStore(redis_handler)
+    assert store._prefix == "cloud_ip"
+
+
+async def test_redis_cloud_ip_store_set_uses_unprefixed_namespace() -> None:
+    redis_handler = AsyncMock()
+    store = RedisCloudIpStore(redis_handler)
+    await store.set("AWS", {"10.0.0.0/8"}, ttl=3600)
+
+    redis_handler.set_key.assert_awaited_once()
+    call_args = redis_handler.set_key.await_args
+    assert call_args.args[0] == "cloud_ip"
+    assert call_args.args[1] == "AWS"
+
+
+def test_redis_cloud_ip_store_custom_key_prefix_respected() -> None:
+    redis_handler = AsyncMock()
+    store = RedisCloudIpStore(redis_handler, key_prefix="my_custom_prefix")
+    assert store._prefix == "my_custom_prefix"

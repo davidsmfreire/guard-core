@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 
 ___
 
+v3.1.0 (2026-05-11)
+-------------------
+
+Production reliability + ergonomics: NOSCRIPT recovery, lazy_init by default, cloud-IP store factory (v3.1.0)
+------------------------------------------------------------------------------------------------------------
+
+### Fixed
+
+- **Recover from Redis NOSCRIPT silently degrading rate limiting.** `RateLimitManager._get_redis_request_count` previously caught `RedisError` and fell through to in-memory counters when EVALSHA raised `NoScriptError` (after `SCRIPT FLUSH`, restart, or failover to a node without our cached SHA), leaving every replica desynchronized. Now catches `NoScriptError` specifically inside the connection block, reloads the Lua script via `script_load`, and retries once. Transient errors during the retry still flow through the existing in-memory fallback. Sync mirror updated identically.
+- **Drop log levels for routine private-IP and missing-geo noise.** "IP not geolocated" and "no countries blocked or whitelisted" → `DEBUG` (config absences and routine private-IP cases, never actionable). "Potential IP spoof attempt" → `DEBUG` when source IP is private/loopback/link-local; `WARNING` for public sources (preserves the genuine security signal). Agent telemetry events fire at all levels — only console noise is reduced.
+- **`RedisCloudIpStore` default `key_prefix` no longer duplicates the `guard:` segment.** Default changed from `"guard:cloud_ip"` to `"cloud_ip"` because `RedisManager.set_key` already prepends `config.redis_prefix`. For users with `redis_prefix="auth_proxy:guard:"` the resolved keys go from `"auth_proxy:guard:guard:cloud_ip:AWS"` to clean `"auth_proxy:guard:cloud_ip:AWS"`. One-time cache invalidation on upgrade — keys repopulate within `cloud_ip_refresh_interval`.
+- **Cloud-provider validation derived from the `CloudProvider` Literal.** Replaced the hardcoded `{"AWS", "GCP", "Azure"}` set in `validate_cloud_providers` with `VALID_CLOUD_PROVIDERS` (a `frozenset` of `typing.get_args(CloudProvider)`). Adding a new provider becomes a one-line edit to the Literal.
+- **`DynamicRules.blocked_cloud_providers` payloads now filter through `VALID_CLOUD_PROVIDERS`** and emit a warning for ignored entries instead of poisoning the static config with garbage providers from dashboard pushes. Sync mirror at `guard_core.sync.handlers.dynamic_rule_handler` patched identically.
+- **`@block_clouds` decorator filters unknown cloud providers.** Previously `@block_clouds(["AWS", "Bogus"])` silently stored `"Bogus"` on the route config (where it would no-op at runtime since it doesn't match any cloud-IP range). Now filters via `VALID_CLOUD_PROVIDERS` and warns on ignored entries. Async and sync mirrors updated.
+- **`@block_countries` / `@allow_countries` decorators uppercase-normalize ISO codes.** Previously lowercase input (`@block_countries(["us"])`) silently mismatched the geo handler's uppercase output, making the rule a no-op. Decorator now stores `[c.upper() for c in countries]` matching the `SecurityConfig` country-set validator. Sync mirror updated.
+- **Country normalization in dynamic rules.** `_apply_country_rules` in both async and sync `DynamicRuleManager` now uppercases inputs and stores `frozenset[str]` to match `SecurityConfig.blocked_countries` / `whitelist_countries` shape.
+- **Cloud-IP store class-as-factory resolution.** `HandlerInitializer._resolve_cloud_ip_store` now treats a bare class object (e.g. `cloud_ip_store=RedisCloudIpStore`) as a factory and invokes it with `redis_handler`, instead of mistaking it for an instance via `isinstance(cls, Protocol)` (which returns `True` for runtime-checkable protocol classes).
+- **Lazy-init partial-failure isolation.** `_run_lazy_init` previously wrapped both cloud-IP and geo-IP initialization in a single `try` — a cloud failure permanently disabled geo init. Each is now wrapped independently so a transient cloud-API outage no longer blocks geo lookups. With `lazy_init=True` now the default, this prevents silent loss of geo enforcement.
+- **PR #19 fallout cleanup.** Cleared 14 ruff F821/UP037 errors and 5 mypy errors that PR #19 left behind: missing `Literal` imports in both decorator base files, narrow-type assignment in `dynamic_rule_handler`, and invariant-`set` argument-type mismatches at `cloud_handler.initialize_redis` call sites in both async and sync `handler_initializer`.
+
+### Changed
+
+- **`lazy_init` defaults to `True`.** Previously `False`, which made `initialize_redis_handlers` await synchronous AWS/GCP/Azure HTTP fetches before returning — blocking Flask/Django app startup for multi-seconds. New default kicks the cloud-IP refresh into a background task and returns immediately. Set `lazy_init=False` explicitly to preserve the old synchronous-init behavior.
+- **`blocked_countries` and `whitelist_countries` are now `frozenset[str]`.** Pydantic validator accepts list/tuple/set/frozenset and normalizes to uppercase, so existing list configs continue to work. Reflects the read-only nature of these fields and gives O(1) membership checks.
+- **`SecurityConfig.block_cloud_providers` field annotation now uses the `CloudProvider` alias** (`set[CloudProvider] | None`) instead of inline `set[Literal["AWS", "GCP", "Azure"]] | None`. Single source of truth between the field type and `VALID_CLOUD_PROVIDERS`.
+
+### Added
+
+- **`cloud_ip_store` accepts a `CloudIpStoreFactory` callable** (`Callable[[RedisHandlerProtocol], CloudIpStoreProtocol]`), letting users defer store construction until the Redis handler is built. Eliminates the chicken-and-egg pattern of constructing a throwaway `RedisManager` just to feed `RedisCloudIpStore`. Sync protocol mirror exposes `SyncCloudIpStoreFactory`.
+- **`CloudProvider` Literal alias and `VALID_CLOUD_PROVIDERS` frozenset** exported from `guard_core.models`. Type alias with single source of truth: `CloudProvider = Literal["AWS", "GCP", "Azure"]`; runtime guard set: `VALID_CLOUD_PROVIDERS = frozenset(get_args(CloudProvider))`.
+- **`rate_limit_script_reloaded` SecurityEvent** emitted on NOSCRIPT recovery so dashboards can detect repeated reloads (signal of unstable Redis).
+
+___
+
 v3.0.0 (2026-04-29)
 -------------------
 

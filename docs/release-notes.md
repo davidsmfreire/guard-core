@@ -10,6 +10,40 @@ Release Notes
 
 ___
 
+v3.1.0 (2026-05-11)
+-------------------
+
+Production reliability + ergonomics: NOSCRIPT recovery, lazy_init by default, cloud-IP store factory (v3.1.0)
+------------------------------------------------------------------------------------------------------------
+
+### Fixed
+
+- **Recover from Redis NOSCRIPT silently degrading rate limiting.** `RateLimitManager._get_redis_request_count` previously caught `RedisError` and fell through to in-memory counters when EVALSHA raised `NoScriptError` (after `SCRIPT FLUSH`, restart, or failover to a node without our cached SHA), leaving every replica desynchronized. Now catches `NoScriptError` specifically inside the connection block, reloads the Lua script via `script_load`, and retries once. Sync mirror updated identically.
+- **Drop log levels for routine private-IP and missing-geo noise.** "IP not geolocated" and "no countries blocked or whitelisted" → `DEBUG`. "Potential IP spoof attempt" → `DEBUG` for private/loopback/link-local source IPs; `WARNING` for public sources.
+- **`RedisCloudIpStore` default `key_prefix` no longer duplicates the `guard:` segment.** Default changed from `"guard:cloud_ip"` to `"cloud_ip"` because `RedisManager.set_key` already prepends `config.redis_prefix`.
+- **Cloud-provider validation derived from the `CloudProvider` Literal** instead of hardcoded sets.
+- **`DynamicRules.blocked_cloud_providers` payloads filter through `VALID_CLOUD_PROVIDERS`** with warning on ignored entries. Sync mirror patched.
+- **`@block_clouds` decorator filters unknown cloud providers** instead of silently storing them.
+- **`@block_countries` / `@allow_countries` decorators uppercase-normalize ISO codes** to match the geo handler's output. Sync mirror updated.
+- **Country normalization in dynamic rules.** `_apply_country_rules` in async + sync `DynamicRuleManager` uppercases inputs and stores `frozenset[str]`.
+- **Cloud-IP store class-as-factory resolution.** `HandlerInitializer` now treats a bare class object passed via `cloud_ip_store=RedisCloudIpStore` as a factory and invokes it with `redis_handler`.
+- **Lazy-init partial-failure isolation.** `_run_lazy_init` wraps cloud-IP and geo-IP initialization in independent `try` blocks so a cloud failure no longer disables geo init. Important now that `lazy_init=True` is the default.
+- **PR #19 fallout cleanup.** Cleared 14 ruff F821/UP037 errors and 5 mypy errors left behind by PR #19.
+
+### Changed
+
+- **`lazy_init` defaults to `True`.** Cloud-IP refresh now runs in a background task; `initialize_redis_handlers` returns immediately. Set `lazy_init=False` to preserve the old synchronous-init behavior.
+- **`blocked_countries` and `whitelist_countries` are now `frozenset[str]`.** Pydantic validator accepts list/tuple/set/frozenset and normalizes to uppercase.
+- **`SecurityConfig.block_cloud_providers` field annotation now uses `set[CloudProvider] | None`** (the Literal alias) instead of inline `Literal["AWS", "GCP", "Azure"]`.
+
+### Added
+
+- **`cloud_ip_store` accepts a `CloudIpStoreFactory` callable** (`Callable[[RedisHandlerProtocol], CloudIpStoreProtocol]`). Sync mirror exposes `SyncCloudIpStoreFactory`.
+- **`CloudProvider` Literal alias and `VALID_CLOUD_PROVIDERS` frozenset** exported from `guard_core.models`.
+- **`rate_limit_script_reloaded` SecurityEvent** emitted on NOSCRIPT recovery.
+
+___
+
 v3.0.0 (2026-04-29)
 -------------------
 

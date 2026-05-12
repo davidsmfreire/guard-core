@@ -160,6 +160,14 @@ def _extract_from_forwarded_header(forwarded_for: str, proxy_depth: int) -> str 
     return None
 
 
+def _is_private_or_loopback(ip: str) -> bool:
+    try:
+        addr = ip_address(ip)
+    except ValueError:
+        return False
+    return addr.is_private or addr.is_loopback or addr.is_link_local
+
+
 def extract_client_ip(
     request: SyncGuardRequest,
     config: Any,
@@ -183,7 +191,12 @@ def extract_client_ip(
     if not is_trusted:
         if forwarded_for:
             safe_forwarded_for = _sanitize_for_log(forwarded_for)
-            logging.warning(
+            log_fn = (
+                logging.debug
+                if _is_private_or_loopback(connecting_ip)
+                else logging.warning
+            )
+            log_fn(
                 f"Potential IP spoof attempt: X-Forwarded-For header "  # nosemgrep
                 f"({safe_forwarded_for}) received from untrusted IP {connecting_ip}"
             )
@@ -331,12 +344,12 @@ def _has_country_rules(config: Any) -> bool:
 
 def _log_country_check_result(ip: str, country: str | None, result_type: str) -> None:
     if result_type == "no_rules":
-        logging.warning(
+        logging.debug(
             f"No countries blocked or whitelisted {ip} - "
             "No countries blocked or whitelisted"
         )
     elif result_type == "no_geolocation":
-        logging.warning(f"IP not geolocated {ip} - IP geolocation failed")
+        logging.debug(f"IP not geolocated {ip} - IP geolocation failed")
     elif result_type == "whitelisted":
         logging.info(
             f"IP from whitelisted country {ip} - {country} - "

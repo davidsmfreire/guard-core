@@ -3,12 +3,12 @@ import pytest
 from guard_core.models import SecurityConfig
 
 
-def test_lazy_init_default_false() -> None:
-    assert SecurityConfig().lazy_init is False
+def test_lazy_init_default_true() -> None:
+    assert SecurityConfig().lazy_init is True
 
 
-def test_lazy_init_accepts_true() -> None:
-    assert SecurityConfig(lazy_init=True).lazy_init is True
+def test_lazy_init_accepts_false() -> None:
+    assert SecurityConfig(lazy_init=False).lazy_init is False
 
 
 def test_geo_ip_db_max_age_default_86400() -> None:

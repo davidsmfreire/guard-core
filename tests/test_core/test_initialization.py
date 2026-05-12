@@ -9,7 +9,7 @@ from guard_core.models import SecurityConfig
 
 @pytest.fixture
 def security_config() -> SecurityConfig:
-    config = SecurityConfig()
+    config = SecurityConfig(lazy_init=False)
     config.enable_redis = True
     config.enable_agent = True
     config.enable_dynamic_rules = False

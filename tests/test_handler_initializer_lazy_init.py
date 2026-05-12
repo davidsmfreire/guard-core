@@ -114,7 +114,7 @@ async def test_lazy_init_returns_quickly_with_blocking_background_init() -> None
         assert initializer._lazy_init_task is not None
 
 
-async def test_lazy_init_background_task_failure_is_swallowed_and_logged() -> None:
+async def test_lazy_init_cloud_failure_still_runs_geo_init() -> None:
     initializer, geo_ip, _ = _make_initializer(lazy_init=True, block_cloud={"AWS"})
     geo_ip.initialize_redis = AsyncMock()
 
@@ -127,7 +127,23 @@ async def test_lazy_init_background_task_failure_is_swallowed_and_logged() -> No
             assert initializer._lazy_init_task is not None
             await asyncio.wait_for(initializer._lazy_init_task, timeout=1.0)
             mock_warning.assert_called_once()
-            geo_ip.initialize_redis.assert_not_awaited()
+            assert "cloud-IP" in mock_warning.call_args[0][0]
+            geo_ip.initialize_redis.assert_awaited_once()
+
+
+async def test_lazy_init_geo_failure_does_not_break_cloud_init() -> None:
+    initializer, geo_ip, _ = _make_initializer(lazy_init=True, block_cloud={"AWS"})
+    geo_ip.initialize_redis = AsyncMock(side_effect=RuntimeError("geo down"))
+
+    with _patch_handlers() as patches:
+        patches["cloud"].initialize_redis = AsyncMock()
+        with patch.object(initializer.logger, "warning") as mock_warning:
+            await initializer.initialize_redis_handlers()
+            assert initializer._lazy_init_task is not None
+            await asyncio.wait_for(initializer._lazy_init_task, timeout=1.0)
+            patches["cloud"].initialize_redis.assert_awaited_once()
+            mock_warning.assert_called_once()
+            assert "geo-IP" in mock_warning.call_args[0][0]
 
 
 async def test_lazy_init_background_task_runs_geo_only_when_no_cloud_providers() -> (

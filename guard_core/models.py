@@ -2,19 +2,26 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from ipaddress import ip_address, ip_network
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing_extensions import Self
 
 from guard_core.handlers.suspatterns_handler import ALL_DETECTION_CATEGORIES
-from guard_core.protocols.cloud_ip_store_protocol import CloudIpStoreProtocol
+from guard_core.protocols.cloud_ip_store_protocol import (
+    CloudIpStoreFactory,
+    CloudIpStoreProtocol,
+)
 from guard_core.protocols.geo_ip_protocol import GeoIPHandler
 from guard_core.protocols.request_protocol import GuardRequest
 from guard_core.protocols.response_protocol import GuardResponse
 
 if TYPE_CHECKING:
     from guard_agent import AgentConfig
+
+
+CloudProvider = Literal["AWS", "GCP", "Azure"]
+VALID_CLOUD_PROVIDERS: frozenset[str] = frozenset(get_args(CloudProvider))
 
 
 class ThreatBanConfig(BaseModel):
@@ -83,14 +90,14 @@ class SecurityConfig(BaseModel):
         default_factory=list, description="Blocked IP addresses or CIDR ranges"
     )
 
-    whitelist_countries: list[str] = Field(
-        default_factory=list,
-        description="A list of country codes that are always allowed",
+    whitelist_countries: frozenset[str] = Field(
+        default_factory=frozenset,
+        description="Country codes that are always allowed",
     )
 
-    blocked_countries: list[str] = Field(
-        default_factory=list,
-        description="A list of country codes that are always blocked",
+    blocked_countries: frozenset[str] = Field(
+        default_factory=frozenset,
+        description="Country codes that are always blocked",
     )
 
     blocked_user_agents: list[str] = Field(
@@ -212,7 +219,7 @@ class SecurityConfig(BaseModel):
         default=600, description="Maximum age of CORS preflight results"
     )
 
-    block_cloud_providers: set[Literal["AWS", "GCP", "Azure"]] | None = Field(
+    block_cloud_providers: set[CloudProvider] | None = Field(
         default=None, description="Set of cloud provider names to block"
     )
 
@@ -224,10 +231,15 @@ class SecurityConfig(BaseModel):
     )
 
     lazy_init: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "Defer geo-IP MMDB download and cloud-IP fetches until the first "
-            "request. Reduces startup time but first requests may block or fail."
+            "When True (default), guard-core defers cloud-IP HTTP fetches and "
+            "geo-IP MMDB downloads to a background task started at app boot, "
+            "so the application does not block on multi-second network calls. "
+            "First requests may see partially-populated cloud-IP ranges until "
+            "the background task completes (typically 1-3 seconds). "
+            "Set to False only if you require synchronous-init guarantees and "
+            "are willing to block app startup until all initial network calls finish."
         ),
     )
 
@@ -238,12 +250,14 @@ class SecurityConfig(BaseModel):
         description="Maximum age in seconds for the IPInfo MMDB before re-download.",
     )
 
-    cloud_ip_store: CloudIpStoreProtocol | None = Field(
+    cloud_ip_store: CloudIpStoreProtocol | CloudIpStoreFactory | None = Field(
         default=None,
         description=(
-            "Pluggable store for cloud IP ranges. None uses the default in-memory "
-            "store. For horizontal scaling, pass a RedisCloudIpStore so instances "
-            "share pre-populated data."
+            "Override the default cloud IP store. Accepts either an instance "
+            "implementing CloudIpStoreProtocol, or a callable that takes the "
+            "Redis handler and returns a store (used to defer construction "
+            "until the redis_handler is available). When None (default), "
+            "guard-core auto-constructs a RedisCloudIpStore if Redis is enabled."
         ),
     )
 
@@ -558,12 +572,21 @@ class SecurityConfig(BaseModel):
             raise ValueError("trusted_proxy_depth must be at least 1")
         return v
 
+    @field_validator("whitelist_countries", "blocked_countries", mode="before")
+    def coerce_country_set(cls, v: Any) -> frozenset[str]:
+        if v is None:
+            return frozenset()
+        if isinstance(v, list | tuple | set | frozenset):
+            return frozenset(str(item).upper() for item in v)
+        raise ValueError(
+            "Country list must be list/tuple/set/frozenset of country codes"
+        )
+
     @field_validator("block_cloud_providers", mode="before")
     def validate_cloud_providers(cls, v: Any) -> set[str]:
-        valid_providers = {"AWS", "GCP", "Azure"}
         if v is None:
             return set()
-        return {p for p in v if p in valid_providers}
+        return {p for p in v if p in VALID_CLOUD_PROVIDERS}
 
     @model_validator(mode="after")
     def validate_geo_ip_handler_exists(self) -> Self:

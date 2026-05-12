@@ -3,9 +3,14 @@ import logging
 import time
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
-from guard_core.models import DynamicRules, SecurityConfig
+from guard_core.models import (
+    VALID_CLOUD_PROVIDERS,
+    CloudProvider,
+    DynamicRules,
+    SecurityConfig,
+)
 
 
 class DynamicRuleManager:
@@ -247,12 +252,18 @@ class DynamicRuleManager:
         self, blocked: list[str], allowed: list[str]
     ) -> None:
         if blocked:
-            self.config.blocked_countries = blocked
-            self.logger.info(f"Dynamic rule: Blocked countries {blocked}")
+            normalized_blocked = frozenset(c.upper() for c in blocked)
+            self.config.blocked_countries = normalized_blocked
+            self.logger.info(
+                f"Dynamic rule: Blocked countries {sorted(normalized_blocked)}"
+            )
 
         if allowed:
-            self.config.whitelist_countries = allowed
-            self.logger.info(f"Dynamic rule: Whitelisted countries {allowed}")
+            normalized_allowed = frozenset(c.upper() for c in allowed)
+            self.config.whitelist_countries = normalized_allowed
+            self.logger.info(
+                f"Dynamic rule: Whitelisted countries {sorted(normalized_allowed)}"
+            )
 
     async def _apply_rate_limit_rules(self, rules: DynamicRules) -> None:
         if rules.global_rate_limit:
@@ -272,8 +283,14 @@ class DynamicRuleManager:
             )
 
     async def _apply_cloud_provider_rules(self, providers: set[str]) -> None:
-        self.config.block_cloud_providers = providers
-        self.logger.info(f"Dynamic rule: Blocked cloud providers {providers}")
+        valid = {p for p in providers if p in VALID_CLOUD_PROVIDERS}
+        self.config.block_cloud_providers = cast(set[CloudProvider], valid)
+        invalid = providers - valid
+        if invalid:
+            self.logger.warning(
+                f"Dynamic rule: ignored unknown cloud providers {sorted(invalid)}"
+            )
+        self.logger.info(f"Dynamic rule: Blocked cloud providers {valid}")
 
     async def _apply_user_agent_rules(self, user_agents: list[str]) -> None:
         self.config.blocked_user_agents = user_agents

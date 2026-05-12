@@ -684,7 +684,7 @@ def test_apply_country_rules_blocked_only(
     with caplog.at_level(logging.INFO):
         manager._apply_country_rules(blocked, allowed)
 
-    assert manager.config.blocked_countries == blocked
+    assert manager.config.blocked_countries == frozenset(blocked)
 
     assert "Dynamic rule: Blocked countries ['XX', 'YY']" in caplog.text
 
@@ -702,9 +702,9 @@ def test_apply_country_rules_allowed_only(
     with caplog.at_level(logging.INFO):
         manager._apply_country_rules(blocked, allowed)
 
-    assert manager.config.whitelist_countries == allowed
+    assert manager.config.whitelist_countries == frozenset(allowed)
 
-    assert "Dynamic rule: Whitelisted countries ['US', 'CA']" in caplog.text
+    assert "Dynamic rule: Whitelisted countries ['CA', 'US']" in caplog.text
 
 
 def test_apply_country_rules_both(
@@ -720,11 +720,11 @@ def test_apply_country_rules_both(
     with caplog.at_level(logging.INFO):
         manager._apply_country_rules(blocked, allowed)
 
-    assert manager.config.blocked_countries == blocked
-    assert manager.config.whitelist_countries == allowed
+    assert manager.config.blocked_countries == frozenset(blocked)
+    assert manager.config.whitelist_countries == frozenset(allowed)
 
     assert "Dynamic rule: Blocked countries ['XX', 'YY']" in caplog.text
-    assert "Dynamic rule: Whitelisted countries ['US', 'CA']" in caplog.text
+    assert "Dynamic rule: Whitelisted countries ['CA', 'US']" in caplog.text
 
 
 def test_apply_rate_limit_global_only(
@@ -850,7 +850,7 @@ def test_apply_cloud_provider_rules(
 
     manager = DynamicRuleManager(config)
 
-    providers = {"aws", "azure", "gcp"}
+    providers = {"AWS", "Azure", "GCP"}
 
     with caplog.at_level(logging.INFO):
         manager._apply_cloud_provider_rules(providers)

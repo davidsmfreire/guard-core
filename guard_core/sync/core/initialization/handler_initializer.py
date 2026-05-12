@@ -1,6 +1,10 @@
 import logging
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
+
+from guard_core.sync.protocols.cloud_ip_store_protocol import (
+    SyncCloudIpStoreProtocol,
+)
 
 if TYPE_CHECKING:
     from guard_core.models import SecurityConfig
@@ -119,21 +123,37 @@ class HandlerInitializer:
         )
 
     def _run_lazy_init(self) -> None:
-        try:
-            from guard_core.sync.handlers.cloud_handler import cloud_handler
+        from guard_core.sync.handlers.cloud_handler import cloud_handler
 
-            if self.config.block_cloud_providers:
+        if self.config.block_cloud_providers:
+            try:
                 cloud_handler.initialize_redis(
                     self.redis_handler,
-                    self.config.block_cloud_providers,
+                    cast(set[str], self.config.block_cloud_providers),
                     ttl=self.config.cloud_ip_refresh_interval,
                 )
-            if self.geo_ip_handler is not None:
+            except Exception as e:
+                self.logger.warning(
+                    "Lazy cloud-IP initialization failed: %s", e, exc_info=True
+                )
+
+        if self.geo_ip_handler is not None:
+            try:
                 self.geo_ip_handler.initialize_redis(self.redis_handler)
-        except Exception as e:
-            self.logger.warning(
-                "Lazy background initialization failed: %s", e, exc_info=True
-            )
+            except Exception as e:
+                self.logger.warning(
+                    "Lazy geo-IP initialization failed: %s", e, exc_info=True
+                )
+
+    def _resolve_cloud_ip_store(self) -> SyncCloudIpStoreProtocol:
+        store = self.config.cloud_ip_store
+        needs_invocation = isinstance(store, type) or (
+            callable(store) and not isinstance(store, SyncCloudIpStoreProtocol)
+        )
+        if needs_invocation:
+            factory = cast(Any, store)
+            return cast(SyncCloudIpStoreProtocol, factory(self.redis_handler))
+        return cast(SyncCloudIpStoreProtocol, store)
 
     def initialize_redis_handlers(self) -> None:
         if not (self.config.enable_redis and self.redis_handler):
@@ -146,7 +166,7 @@ class HandlerInitializer:
         from guard_core.sync.handlers.suspatterns_handler import sus_patterns_handler
 
         if self.config.cloud_ip_store is not None:
-            cloud_handler.set_store(self.config.cloud_ip_store)
+            cloud_handler.set_store(self._resolve_cloud_ip_store())
 
         if self.config.lazy_init:
             self._lazy_init_task = threading.Thread(
@@ -157,7 +177,7 @@ class HandlerInitializer:
             if self.config.block_cloud_providers:
                 cloud_handler.initialize_redis(
                     self.redis_handler,
-                    self.config.block_cloud_providers,
+                    cast(set[str], self.config.block_cloud_providers),
                     ttl=self.config.cloud_ip_refresh_interval,
                 )
             if self.geo_ip_handler is not None:

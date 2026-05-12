@@ -1,6 +1,8 @@
+import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
+from guard_core.models import VALID_CLOUD_PROVIDERS, CloudProvider
 from guard_core.sync.decorators.base import BaseSecurityMixin, DecoratedFunction
 
 
@@ -25,7 +27,7 @@ class AccessControlMixin(BaseSecurityMixin):
     ) -> Callable[[Callable[..., Any]], DecoratedFunction]:
         def decorator(func: Callable[..., Any]) -> DecoratedFunction:
             route_config = self._ensure_route_config(func)
-            route_config.blocked_countries = countries
+            route_config.blocked_countries = [c.upper() for c in countries]
             return self._apply_route_config(func)
 
         return decorator
@@ -35,7 +37,7 @@ class AccessControlMixin(BaseSecurityMixin):
     ) -> Callable[[Callable[..., Any]], DecoratedFunction]:
         def decorator(func: Callable[..., Any]) -> DecoratedFunction:
             route_config = self._ensure_route_config(func)
-            route_config.whitelist_countries = countries
+            route_config.whitelist_countries = [c.upper() for c in countries]
             return self._apply_route_config(func)
 
         return decorator
@@ -46,9 +48,18 @@ class AccessControlMixin(BaseSecurityMixin):
         def decorator(func: Callable[..., Any]) -> DecoratedFunction:
             route_config = self._ensure_route_config(func)
             if providers is None:
-                route_config.block_cloud_providers = {"AWS", "GCP", "Azure"}
+                route_config.block_cloud_providers = cast(
+                    set[CloudProvider], {"AWS", "GCP", "Azure"}
+                )
             else:
-                route_config.block_cloud_providers = set(providers)
+                valid = {p for p in providers if p in VALID_CLOUD_PROVIDERS}
+                route_config.block_cloud_providers = cast(set[CloudProvider], valid)
+                invalid = set(providers) - valid
+                if invalid:
+                    logging.getLogger("guard_core.sync.decorators").warning(
+                        "@block_clouds: ignored unknown cloud providers %s",
+                        sorted(invalid),
+                    )
             return self._apply_route_config(func)
 
         return decorator

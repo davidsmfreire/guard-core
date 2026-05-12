@@ -88,7 +88,7 @@ def test_lazy_init_returns_quickly_with_blocking_background_init() -> None:
         assert initializer._lazy_init_task is not None
 
 
-def test_lazy_init_background_task_failure_is_swallowed_and_logged() -> None:
+def test_lazy_init_cloud_failure_still_runs_geo_init() -> None:
     initializer, geo_ip, _ = _make_initializer(lazy_init=True, block_cloud={"AWS"})
     geo_ip.initialize_redis = MagicMock()
 
@@ -101,7 +101,23 @@ def test_lazy_init_background_task_failure_is_swallowed_and_logged() -> None:
             assert initializer._lazy_init_task is not None
             initializer._lazy_init_task.join(timeout=1.0)
             mock_warning.assert_called_once()
-            geo_ip.initialize_redis.assert_not_called()
+            assert "cloud-IP" in mock_warning.call_args[0][0]
+            geo_ip.initialize_redis.assert_called_once()
+
+
+def test_lazy_init_geo_failure_does_not_break_cloud_init() -> None:
+    initializer, geo_ip, _ = _make_initializer(lazy_init=True, block_cloud={"AWS"})
+    geo_ip.initialize_redis = MagicMock(side_effect=RuntimeError("geo down"))
+
+    with _patch_handlers() as patches:
+        patches["cloud"].initialize_redis = MagicMock()
+        with patch.object(initializer.logger, "warning") as mock_warning:
+            initializer.initialize_redis_handlers()
+            assert initializer._lazy_init_task is not None
+            initializer._lazy_init_task.join(timeout=1.0)
+            patches["cloud"].initialize_redis.assert_called_once()
+            mock_warning.assert_called_once()
+            assert "geo-IP" in mock_warning.call_args[0][0]
 
 
 def test_lazy_init_background_task_runs_geo_only_when_no_cloud_providers() -> None:
@@ -155,3 +171,22 @@ def test_no_redis_handler_returns_immediately() -> None:
     config = SecurityConfig(lazy_init=False, enable_redis=True)
     initializer = HandlerInitializer(config=config, redis_handler=None)
     initializer.initialize_redis_handlers()
+
+
+def test_eager_init_skips_geo_when_handler_none() -> None:
+    config = SecurityConfig(
+        lazy_init=False,
+        enable_redis=True,
+        block_cloud_providers={"AWS"},
+    )
+    redis_handler = MagicMock()
+    redis_handler.initialize = MagicMock()
+    initializer = HandlerInitializer(
+        config=config,
+        redis_handler=redis_handler,
+        geo_ip_handler=None,
+    )
+    with _patch_handlers() as patches:
+        initializer.initialize_redis_handlers()
+        patches["cloud"].initialize_redis.assert_called_once()
+        patches["ipban"].initialize_redis.assert_called_once()

@@ -389,13 +389,13 @@ async def test_cloud_ip_redis_caching(security_config_redis: SecurityConfig) -> 
         assert cloud_handler.is_cloud_ip("192.168.0.1", {"AWS"})
         import json as _json
 
-        cached_raw = await redis_handler.get_key("guard:cloud_ip", "AWS")
+        cached_raw = await redis_handler.get_key("cloud_ip", "AWS")
         assert _json.loads(cached_raw) == ["192.168.0.0/24"]
 
         mock_aws.return_value = {ipaddress.IPv4Network("192.168.1.0/24")}
         await cloud_handler.refresh_async()
 
-        await redis_handler.delete("guard:cloud_ip", "AWS")
+        await redis_handler.delete("cloud_ip", "AWS")
         await cloud_handler.refresh_async()
 
         mock_aws.side_effect = Exception("API Error")
@@ -417,9 +417,7 @@ async def test_cloud_ip_redis_cache_hit(
     redis_handler = RedisManager(security_config_redis)
     await redis_handler.initialize()
 
-    await redis_handler.set_key(
-        "guard:cloud_ip", "AWS", _json.dumps(["192.168.0.0/24"])
-    )
+    await redis_handler.set_key("cloud_ip", "AWS", _json.dumps(["192.168.0.0/24"]))
 
     await cloud_handler.initialize_redis(redis_handler)
 
@@ -498,7 +496,7 @@ async def test_cloud_ip_redis_error_handling(
         await redis_handler.initialize()
 
         await redis_handler.delete("cloud_ranges", "AWS")
-        await redis_handler.delete("guard:cloud_ip", "AWS")
+        await redis_handler.delete("cloud_ip", "AWS")
 
         mock_aws.side_effect = Exception("API Error")
         await cloud_handler.initialize_redis(redis_handler)

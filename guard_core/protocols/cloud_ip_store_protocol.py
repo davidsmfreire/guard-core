@@ -1,4 +1,7 @@
+from collections.abc import Callable
 from typing import Protocol, runtime_checkable
+
+from guard_core.protocols.redis_protocol import RedisHandlerProtocol
 
 
 @runtime_checkable
@@ -10,3 +13,6 @@ class CloudIpStoreProtocol(Protocol):
     ) -> None: ...
 
     async def clear(self) -> None: ...
+
+
+CloudIpStoreFactory = Callable[[RedisHandlerProtocol], CloudIpStoreProtocol]

@@ -6,7 +6,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from redis.exceptions import RedisError
+from redis.exceptions import NoScriptError, RedisError
 
 from guard_core.models import SecurityConfig
 from guard_core.protocols.response_protocol import GuardResponse
@@ -57,6 +57,23 @@ class RateLimitManager:
     def initialize_agent(self, agent_handler: Any) -> None:
         self.agent_handler = agent_handler
 
+    def _emit_script_reloaded_event(self) -> None:
+        if not self.agent_handler:
+            return
+        try:
+            from guard_agent import SecurityEvent
+
+            event = SecurityEvent(
+                timestamp=datetime.now(timezone.utc),
+                event_type="rate_limit_script_reloaded",
+                ip_address="system",
+                action_taken="script_reloaded",
+                reason="NOSCRIPT recovery: Lua script re-cached on Redis",
+            )
+            self.agent_handler.send_event(event)
+        except Exception as e:
+            self.logger.error(f"Failed to send script-reload event: {e}")
+
     def _get_redis_request_count(
         self,
         client_ip: str,
@@ -81,14 +98,29 @@ class RateLimitManager:
         try:
             if self.rate_limit_script_sha:
                 with self.redis_handler.get_connection() as conn:
-                    count = conn.evalsha(
-                        self.rate_limit_script_sha,
-                        1,
-                        key_name,
-                        current_time,
-                        window,
-                        limit,
-                    )
+                    try:
+                        count = conn.evalsha(
+                            self.rate_limit_script_sha,
+                            1,
+                            key_name,
+                            current_time,
+                            window,
+                            limit,
+                        )
+                    except NoScriptError:
+                        self.rate_limit_script_sha = conn.script_load(RATE_LIMIT_SCRIPT)
+                        self.logger.info(
+                            "Rate limit Lua script reloaded after NOSCRIPT"
+                        )
+                        self._emit_script_reloaded_event()
+                        count = conn.evalsha(
+                            self.rate_limit_script_sha,
+                            1,
+                            key_name,
+                            current_time,
+                            window,
+                            limit,
+                        )
                 return int(count)
             else:
                 with self.redis_handler.get_connection() as conn:

@@ -55,7 +55,7 @@ async def test_apply_rules_persists_on_success() -> None:
     rules = _rules(blocked_countries=["NEW"])
     await manager._apply_rules(rules)
 
-    assert config.blocked_countries == ["NEW"]
+    assert config.blocked_countries == frozenset({"NEW"})
 
 
 @pytest.mark.asyncio
