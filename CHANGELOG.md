@@ -24,6 +24,7 @@ Production reliability + ergonomics: NOSCRIPT recovery, lazy_init by default, cl
 - **Cloud-IP store class-as-factory resolution.** `HandlerInitializer._resolve_cloud_ip_store` now treats a bare class object (e.g. `cloud_ip_store=RedisCloudIpStore`) as a factory and invokes it with `redis_handler`, instead of mistaking it for an instance via `isinstance(cls, Protocol)` (which returns `True` for runtime-checkable protocol classes).
 - **Lazy-init partial-failure isolation.** `_run_lazy_init` previously wrapped both cloud-IP and geo-IP initialization in a single `try` — a cloud failure permanently disabled geo init. Each is now wrapped independently so a transient cloud-API outage no longer blocks geo lookups. With `lazy_init=True` now the default, this prevents silent loss of geo enforcement.
 - **PR #19 fallout cleanup.** Cleared 14 ruff F821/UP037 errors and 5 mypy errors that PR #19 left behind: missing `Literal` imports in both decorator base files, narrow-type assignment in `dynamic_rule_handler`, and invariant-`set` argument-type mismatches at `cloud_handler.initialize_redis` call sites in both async and sync `handler_initializer`.
+- **`SecurityConfig.dynamic_rule_interval` is now actually honored.** `to_agent_config()` previously dropped this field on the floor; the agent's `_rules_loop` ran on a hardcoded 300s regardless of what users configured. Fixed by forwarding the value through to `AgentConfig.dynamic_rule_interval`. Effective once `guard-agent >= 2.6.0` is installed (the agent side adds the matching field).
 
 ### Changed
 
@@ -36,6 +37,7 @@ Production reliability + ergonomics: NOSCRIPT recovery, lazy_init by default, cl
 - **`cloud_ip_store` accepts a `CloudIpStoreFactory` callable** (`Callable[[RedisHandlerProtocol], CloudIpStoreProtocol]`), letting users defer store construction until the Redis handler is built. Eliminates the chicken-and-egg pattern of constructing a throwaway `RedisManager` just to feed `RedisCloudIpStore`. Sync protocol mirror exposes `SyncCloudIpStoreFactory`.
 - **`CloudProvider` Literal alias and `VALID_CLOUD_PROVIDERS` frozenset** exported from `guard_core.models`. Type alias with single source of truth: `CloudProvider = Literal["AWS", "GCP", "Azure"]`; runtime guard set: `VALID_CLOUD_PROVIDERS = frozenset(get_args(CloudProvider))`.
 - **`rate_limit_script_reloaded` SecurityEvent** emitted on NOSCRIPT recovery so dashboards can detect repeated reloads (signal of unstable Redis).
+- **`SecurityConfig.agent_status_interval`** — new `int` field (default 300, range 60-86400) controlling how often the agent reports its status to the SaaS dashboard. Forwarded to `AgentConfig.status_interval`. Pairs with `guard-agent >= 2.6.0` which actually honors the value (the agent previously hardcoded 300).
 
 ___
 

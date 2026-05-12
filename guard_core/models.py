@@ -376,6 +376,13 @@ class SecurityConfig(BaseModel):
         default=300, description="Interval in seconds between dynamic rule updates"
     )
 
+    agent_status_interval: int = Field(
+        default=300,
+        ge=60,
+        le=86400,
+        description="Interval in seconds between agent status reports to the SaaS",
+    )
+
     emergency_mode: bool = Field(
         default=False, description="Emergency lockdown mode (set by dynamic rules)"
     )
@@ -697,6 +704,8 @@ class SecurityConfig(BaseModel):
                 project_id=self.agent_project_id,
                 buffer_size=self.agent_buffer_size,
                 flush_interval=self.agent_flush_interval,
+                dynamic_rule_interval=self.dynamic_rule_interval,
+                status_interval=self.agent_status_interval,
                 enable_events=self.agent_enable_events,
                 enable_metrics=self.agent_enable_metrics,
                 timeout=self.agent_timeout,

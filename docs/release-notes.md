@@ -29,6 +29,7 @@ Production reliability + ergonomics: NOSCRIPT recovery, lazy_init by default, cl
 - **Cloud-IP store class-as-factory resolution.** `HandlerInitializer` now treats a bare class object passed via `cloud_ip_store=RedisCloudIpStore` as a factory and invokes it with `redis_handler`.
 - **Lazy-init partial-failure isolation.** `_run_lazy_init` wraps cloud-IP and geo-IP initialization in independent `try` blocks so a cloud failure no longer disables geo init. Important now that `lazy_init=True` is the default.
 - **PR #19 fallout cleanup.** Cleared 14 ruff F821/UP037 errors and 5 mypy errors left behind by PR #19.
+- **`SecurityConfig.dynamic_rule_interval` is now actually honored.** `to_agent_config()` previously dropped this field on the floor; the agent's `_rules_loop` ran on a hardcoded 300s regardless of what users configured. Fixed by forwarding the value through to `AgentConfig.dynamic_rule_interval`. Effective once `guard-agent >= 2.6.0` is installed.
 
 ### Changed
 
@@ -41,6 +42,7 @@ Production reliability + ergonomics: NOSCRIPT recovery, lazy_init by default, cl
 - **`cloud_ip_store` accepts a `CloudIpStoreFactory` callable** (`Callable[[RedisHandlerProtocol], CloudIpStoreProtocol]`). Sync mirror exposes `SyncCloudIpStoreFactory`.
 - **`CloudProvider` Literal alias and `VALID_CLOUD_PROVIDERS` frozenset** exported from `guard_core.models`.
 - **`rate_limit_script_reloaded` SecurityEvent** emitted on NOSCRIPT recovery.
+- **`SecurityConfig.agent_status_interval`** — new `int` field (default 300, range 60-86400) controlling how often the agent reports its status to the SaaS dashboard. Forwarded to `AgentConfig.status_interval`. Pairs with `guard-agent >= 2.6.0` which actually honors the value (the agent previously hardcoded 300).
 
 ___
 
