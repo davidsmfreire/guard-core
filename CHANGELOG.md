@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 
 ___
 
-v3.1.0 (2026-05-11)
+v3.1.0 (2026-05-15)
 -------------------
 
 Production reliability + ergonomics: NOSCRIPT recovery, lazy_init by default, cloud-IP store factory (v3.1.0)
