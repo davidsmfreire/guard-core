@@ -61,7 +61,7 @@ Documentation
 
 📚 **[Documentation](https://rennf93.github.io/guard-core)** - Full technical documentation for adapter developers.
 
-🤖 **[Monitoring Agent Integration](https://github.com/rennf93/fastapi-guard-agent)** - Monitor your Guard instance with a monitoring agent.
+🤖 **[Monitoring Agent Integration](https://github.com/rennf93/guard-agent)** - Monitor your Guard instance with a monitoring agent.
 
 ___
 

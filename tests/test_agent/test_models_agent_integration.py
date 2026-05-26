@@ -144,7 +144,7 @@ def test_agent_config_with_all_defaults() -> None:
         agent_api_key="test-key",
     )
 
-    assert config.agent_endpoint == "https://api.fastapi-guard.com"
+    assert config.agent_endpoint == "https://api.guard-core.com"
     assert config.agent_project_id is None
     assert config.agent_buffer_size == 100
     assert config.agent_flush_interval == 30

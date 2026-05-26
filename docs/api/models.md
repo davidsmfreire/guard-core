@@ -117,7 +117,7 @@ class SecurityConfig(BaseModel):
     enable_agent: bool = Field(default=False)
     agent_api_key: str | None = Field(default=None)
     agent_endpoint: str = Field(
-        default="https://api.fastapi-guard.com"
+        default="https://api.guard-core.com"
     )
     agent_project_id: str | None = Field(default=None)
     agent_buffer_size: int = Field(default=100)

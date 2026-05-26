@@ -330,7 +330,7 @@ Agent / Telemetry
 |--------------------------|---------------|-----------------------------------|-------------------------------------|
 | `enable_agent`           | `bool`        | `False`                           | Enable Guard Agent telemetry.       |
 | `agent_api_key`          | `str \| None` | `None`                            | API key for the SaaS platform.      |
-| `agent_endpoint`         | `str`         | `"https://api.fastapi-guard.com"` | Agent endpoint URL.                 |
+| `agent_endpoint`         | `str`         | `"https://api.guard-core.com"` | Agent endpoint URL.                 |
 | `agent_project_id`       | `str \| None` | `None`                            | Project identifier.                 |
 | `agent_buffer_size`      | `int`         | `100`                             | Events to buffer before flush.      |
 | `agent_flush_interval`   | `int`         | `30`                              | Seconds between automatic flushes.  |

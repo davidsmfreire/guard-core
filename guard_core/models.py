@@ -316,7 +316,7 @@ class SecurityConfig(BaseModel):
     )
 
     agent_endpoint: str = Field(
-        default="https://api.fastapi-guard.com",
+        default="https://api.guard-core.com",
         description="Guard Agent SaaS platform endpoint",
     )
 
