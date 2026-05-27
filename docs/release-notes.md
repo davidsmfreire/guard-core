@@ -10,6 +10,18 @@ Release Notes
 
 ___
 
+v3.1.1 (2026-05-27)
+-------------------
+
+Agent endpoint default + PEP 639 license metadata (v3.1.1)
+----------------------------------------------------------
+
+- **Changed** — `SecurityConfig.agent_endpoint` now defaults to `https://api.guard-core.com` (previously `https://api.fastapi-guard.com`), aligning the Guard Agent SaaS endpoint with the guard-core brand. Set `SecurityConfig(agent_endpoint=...)` to target a different host.
+- **Packaging** — Migrated license metadata to PEP 639: `license = "MIT"` (SPDX expression) plus `license-files = ["LICENSE"]`, and dropped the deprecated `License :: OSI Approved :: MIT License` classifier. Clears the setuptools `project.license`-table and license-classifier deprecation warnings.
+- **Build** — Removed the unused `setup.py`; the release workflow now builds via `python -m build` (hatchling backend) instead of `python setup.py sdist bdist_wheel`, eliminating the `setup.py install is deprecated` warning.
+
+___
+
 v3.1.0 (2026-05-15)
 -------------------
 
