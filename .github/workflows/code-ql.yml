@@ -13,7 +13,6 @@ on:
       - 'pyproject.toml'
       - 'pytest.ini'
       - 'reqs.pip'
-      - 'setup.py'
       - 'tests/**'
   pull_request:
     branches: [master]
@@ -27,7 +26,6 @@ on:
       - 'pyproject.toml'
       - 'pytest.ini'
       - 'reqs.pip'
-      - 'setup.py'
       - 'tests/**'
   schedule:
     - cron: '0 0 * * 1'

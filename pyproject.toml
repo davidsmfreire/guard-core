@@ -258,7 +258,7 @@ ignore = []
 
 [tool.deptry]
 exclude = ["tests", ".venv", "vulture_whitelist.py", "docs"]
-extend_exclude = ["conftest.py", "setup.py"]
+extend_exclude = ["conftest.py"]
 known_first_party = ["guard_core"]
 per_rule_ignores = { "DEP002" = [
     "bandit",
