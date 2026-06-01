@@ -1,6 +1,7 @@
 import logging
 import time
 
+from guard_core.exceptions import GuardRedisError
 from guard_core.protocols.response_protocol import GuardResponse
 from guard_core.sync.core.checks.base import SecurityCheck
 from guard_core.sync.protocols.request_protocol import SyncGuardRequest
@@ -35,6 +36,19 @@ class SecurityCheckPipeline:
                     return response
 
             except Exception as e:
+                if isinstance(e, GuardRedisError) and check.config.redis_fail_open:
+                    if check.check_name not in self.muted_check_logs:
+                        self.logger.warning(
+                            f"Skipping check {check.check_name}: Redis "
+                            f"unavailable, failing open (redis_fail_open=True)",
+                            extra={
+                                "check": check.check_name,
+                                "path": request.url_path,
+                                "method": request.method,
+                            },
+                        )
+                    continue
+
                 if check.check_name not in self.muted_check_logs:
                     self.logger.error(
                         f"Error in security check {check.check_name}: {e}",
