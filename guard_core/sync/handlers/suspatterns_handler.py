@@ -1,4 +1,3 @@
-import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -9,6 +8,7 @@ from guard_core.sync.detection_engine import (
     PerformanceMonitor,
     SemanticAnalyzer,
 )
+from guard_core.sync.detection_engine import safe_regex as re
 
 _CTX_XSS = frozenset({"query_param", "header", "request_body", "unknown"})
 _CTX_SQLI = frozenset({"query_param", "request_body", "unknown"})
@@ -450,81 +450,25 @@ class SusPatternsManager:
         self,
         pattern: re.Pattern,
         content: str,
-        ip_address: str,
         pattern_start: float,
         category: str,
     ) -> tuple[dict | None, bool]:
-        timeout_occurred = False
+        # RE2 runs in linear time with no catastrophic backtracking, so there is
+        # no ReDoS timeout to guard against - match directly on the event loop.
+        # The second tuple element (timeout_occurred) is retained for callers but
+        # is always False.
+        match = pattern.search(content)
+        if match:
+            return {
+                "type": "regex",
+                "pattern": pattern.pattern,
+                "match": match.group(),
+                "position": match.start(),
+                "execution_time": time.time() - pattern_start,
+                "category": category,
+            }, False
 
-        if self._compiler:
-            safe_matcher = self._compiler.create_safe_matcher(pattern.pattern)
-            match = safe_matcher(content)
-
-            if match is None and time.time() - pattern_start >= 0.9 * 2.0:
-                timeout_occurred = True
-                import logging
-
-                logging.getLogger("guard_core.sync.handlers.suspatterns").warning(
-                    f"Pattern timeout: {pattern.pattern[:50]}..."
-                )
-            elif match:
-                return {
-                    "type": "regex",
-                    "pattern": pattern.pattern,
-                    "match": match.group(),
-                    "position": match.start(),
-                    "execution_time": time.time() - pattern_start,
-                    "category": category,
-                }, timeout_occurred
-        else:
-            match, timeout_occurred = self._check_pattern_with_timeout(
-                pattern, content, ip_address, pattern_start
-            )
-            if match:
-                return {
-                    "type": "regex",
-                    "pattern": pattern.pattern,
-                    "match": match.group(),
-                    "position": match.start(),
-                    "execution_time": time.time() - pattern_start,
-                    "category": category,
-                }, timeout_occurred
-
-        return None, timeout_occurred
-
-    def _check_pattern_with_timeout(
-        self, pattern: re.Pattern, content: str, ip_address: str, pattern_start: float
-    ) -> tuple[re.Match | None, bool]:
-        import concurrent.futures
-
-        def _search(p: re.Pattern = pattern) -> re.Match | None:
-            return p.search(content)
-
-        executor_class = concurrent.futures.ThreadPoolExecutor
-        with executor_class(max_workers=1) as executor:
-            future = executor.submit(_search)
-            try:
-                match = future.result(timeout=2.0)
-                return match, False
-            except concurrent.futures.TimeoutError:
-                import logging
-
-                logger = logging.getLogger("guard_core.sync.handlers.suspatterns")
-                logger.warning(
-                    f"Regex timeout exceeded for pattern: "
-                    f"{pattern.pattern[:50]}... "
-                    f"Potential ReDoS attack blocked. IP: {ip_address}"
-                )
-                future.cancel()
-                return None, True
-            except Exception as e:
-                import logging
-
-                logger = logging.getLogger("guard_core.sync.handlers.suspatterns")
-                logger.error(
-                    f"Error in regex search for pattern {pattern.pattern[:50]}...: {e}"
-                )
-                return None, False
+        return None, False
 
     _KNOWN_CONTEXTS = frozenset(
         {"query_param", "header", "url_path", "request_body", "unknown"}
@@ -540,7 +484,6 @@ class SusPatternsManager:
     def _check_regex_patterns(
         self,
         content: str,
-        ip_address: str,
         correlation_id: str | None,
         context: str = "unknown",
         enabled_categories: set[str] | None = None,
@@ -566,7 +509,7 @@ class SusPatternsManager:
             pattern_start = time.time()
 
             threat, timeout_occurred = self._check_regex_pattern(
-                pattern, content, ip_address, pattern_start, category
+                pattern, content, pattern_start, category
             )
 
             if timeout_occurred:
@@ -651,7 +594,6 @@ class SusPatternsManager:
 
         regex_threats, matched_patterns, timeouts = self._check_regex_patterns(
             processed_content,
-            ip_address,
             correlation_id,
             context,
             enabled_categories,
@@ -771,7 +713,19 @@ class SusPatternsManager:
     def add_pattern(cls, pattern: str, custom: bool = False) -> None:
         instance = cls()
 
-        compiled_pattern = re.compile(pattern, re.IGNORECASE | re.MULTILINE)
+        # RE2 rejects backreferences and lookaround at compile time. Skipping an
+        # unsupported pattern (instead of raising) keeps a bad operator- or
+        # Redis-supplied rule from taking down pattern loading.
+        try:
+            compiled_pattern = re.compile(pattern, re.IGNORECASE | re.MULTILINE)
+        except re.error as exc:
+            import logging
+
+            logging.getLogger("guard_core.sync.handlers.suspatterns").warning(
+                f"Skipping unsupported detection pattern {pattern[:50]!r}: {exc}"
+            )
+            return
+
         compiled_tuple = (compiled_pattern, _CTX_ALL, "custom")
         if custom:
             instance.compiled_custom_patterns.add(compiled_tuple)

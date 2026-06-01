@@ -13,10 +13,17 @@ def test_pattern_compiler() -> None:
     is_safe, reason = compiler.validate_pattern_safety(safe_pattern)
     assert is_safe is True
 
-    dangerous_pattern = r"(.*)+"
-    is_safe, reason = compiler.validate_pattern_safety(dangerous_pattern)
+    # Catastrophic-backtracking patterns are linear under RE2, so they are now
+    # accepted; only constructs RE2 cannot represent (lookaround) are rejected.
+    formerly_dangerous = r"(.*)+"
+    is_safe, reason = compiler.validate_pattern_safety(formerly_dangerous)
+    assert is_safe is True
+    assert reason == "Pattern appears safe"
+
+    unsupported = r"(?=foo)bar"
+    is_safe, reason = compiler.validate_pattern_safety(unsupported)
     assert is_safe is False
-    assert "dangerous" in reason.lower()
+    assert "RE2" in reason
 
 
 async def test_content_preprocessor() -> None:

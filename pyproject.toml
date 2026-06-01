@@ -23,6 +23,7 @@ classifiers = [
 dependencies = [
     "aiohttp",
     "cachetools",
+    "google-re2",
     "maxminddb",
     "pydantic",
     "redis",
@@ -139,6 +140,10 @@ exclude = ["vulture_whitelist.py", ".venv"]
 [[tool.mypy.overrides]]
 module = "redis.*"
 follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = "re2"
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "guard_agent"
@@ -290,5 +295,6 @@ per_rule_ignores = { "DEP002" = [
 ] }
 
 [tool.deptry.package_module_name_map]
+google-re2 = "re2"
 opentelemetry-sdk = "opentelemetry"
 opentelemetry-exporter-otlp-proto-http = "opentelemetry"

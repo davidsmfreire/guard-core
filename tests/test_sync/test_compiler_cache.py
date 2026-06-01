@@ -1,11 +1,7 @@
-import concurrent.futures
-import re
-import threading
 import types
-from typing import cast
+from typing import Any, cast
 
-import pytest
-
+from guard_core.sync.detection_engine import safe_regex as re
 from guard_core.sync.detection_engine.compiler import PatternCompiler
 
 
@@ -66,6 +62,7 @@ def test_compile_pattern_sync() -> None:
     result = compiler.compile_pattern_sync("hello", re.IGNORECASE)
     assert isinstance(result, re.Pattern)
     assert result.pattern == "hello"
+    assert result.search("say HELLO") is not None
 
 
 def test_validate_pattern_safety_safe_pattern() -> None:
@@ -76,10 +73,15 @@ def test_validate_pattern_safety_safe_pattern() -> None:
 
 
 def test_validate_pattern_safety_dangerous_pattern() -> None:
+    # Classic catastrophic-backtracking patterns are linear under RE2, so they
+    # are now accepted (and run quickly) instead of being rejected.
     compiler = PatternCompiler()
     safe, msg = compiler.validate_pattern_safety(r"(.*)+")
-    assert safe is False
-    assert "dangerous construct" in msg
+    assert safe is True
+    assert msg == "Pattern appears safe"
+
+    compiled = compiler.compile_pattern_sync(r"(.*)+")
+    assert compiled.search("a" * 10000 + "!") is not None
 
 
 def test_validate_pattern_safety_custom_test_strings() -> None:
@@ -92,130 +94,17 @@ def test_validate_pattern_safety_invalid_regex() -> None:
     compiler = PatternCompiler()
     safe, msg = compiler.validate_pattern_safety("[invalid")
     assert safe is False
-    assert "Pattern validation failed" in msg
+    assert "RE2" in msg
 
 
-def test_validate_pattern_safety_elapsed_timeout(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import time as time_mod
-
-    call_count = 0
-
-    def fake_time() -> float:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return 0.0
-        return 1.0
-
-    monkeypatch.setattr(time_mod, "time", fake_time)
+def test_validate_pattern_safety_rejects_unsupported_constructs() -> None:
+    # RE2 has no lookaround or backreferences; such patterns are rejected at
+    # compile time rather than silently degrading to a backtracking engine.
     compiler = PatternCompiler()
-    safe, msg = compiler.validate_pattern_safety("safe", test_strings=["x"])
-    assert safe is False
-    assert "timed out" in msg
-
-
-def test_validate_pattern_safety_concurrent_timeout(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeExecutor:
-        def __enter__(self) -> "FakeExecutor":
-            return self
-
-        def __exit__(self, *args: object) -> None:
-            pass
-
-        def submit(self, _fn: object) -> "FakeFuture":
-            return FakeFuture()
-
-    class FakeFuture:
-        def result(self, timeout: float = 0) -> None:
-            raise concurrent.futures.TimeoutError()
-
-    monkeypatch.setattr(
-        concurrent.futures, "ThreadPoolExecutor", lambda **kw: FakeExecutor()
-    )
-    compiler = PatternCompiler()
-    safe, msg = compiler.validate_pattern_safety("safe", test_strings=["x"])
-    assert safe is False
-    assert "timed out" in msg
-
-
-def test_create_safe_matcher_returns_match() -> None:
-    compiler = PatternCompiler()
-    matcher = compiler.create_safe_matcher("hello")
-    result = matcher("say hello world")
-    assert result is not None
-
-
-def test_create_safe_matcher_no_match_returns_none() -> None:
-    compiler = PatternCompiler()
-    matcher = compiler.create_safe_matcher("nomatch")
-    result = matcher("completely unrelated")
-    assert result is None
-
-
-def test_create_safe_matcher_timeout_returns_none(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeExecutor:
-        def __enter__(self) -> "FakeExecutor":
-            return self
-
-        def __exit__(self, *args: object) -> None:
-            pass
-
-        def submit(self, _fn: object) -> "FakeFuture":
-            return FakeFuture()
-
-    class FakeFuture:
-        def result(self, timeout: float = 0) -> None:
-            raise concurrent.futures.TimeoutError()
-
-        def cancel(self) -> None:
-            pass
-
-    monkeypatch.setattr(
-        concurrent.futures, "ThreadPoolExecutor", lambda **kw: FakeExecutor()
-    )
-    compiler = PatternCompiler()
-    matcher = compiler.create_safe_matcher("x")
-    result = matcher("test")
-    assert result is None
-
-
-def test_create_safe_matcher_exception_returns_none(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeExecutor:
-        def __enter__(self) -> "FakeExecutor":
-            return self
-
-        def __exit__(self, *args: object) -> None:
-            pass
-
-        def submit(self, _fn: object) -> "FakeFuture":
-            return FakeFuture()
-
-    class FakeFuture:
-        def result(self, timeout: float = 0) -> None:
-            raise RuntimeError("boom")
-
-    monkeypatch.setattr(
-        concurrent.futures, "ThreadPoolExecutor", lambda **kw: FakeExecutor()
-    )
-    compiler = PatternCompiler()
-    matcher = compiler.create_safe_matcher("x")
-    result = matcher("test")
-    assert result is None
-
-
-def test_create_safe_matcher_uses_default_timeout() -> None:
-    compiler = PatternCompiler(default_timeout=1.0)
-    matcher = compiler.create_safe_matcher("hi")
-    result = matcher("hi there")
-    assert result is not None
+    for pattern in (r"(?=foo)bar", r"(?<=foo)bar", r"(\w+)\1"):
+        safe, msg = compiler.validate_pattern_safety(pattern)
+        assert safe is False
+        assert "RE2" in msg
 
 
 def test_batch_compile_with_validation() -> None:
@@ -280,7 +169,7 @@ def test_compile_pattern_cache_hit_then_evicted_branch() -> None:
         ) -> None:
             original_lock.__exit__(exc_type, exc_val, exc_tb)
 
-    compiler._lock = cast(threading.Lock, EvictOnFirstAcquire())
+    compiler._lock = cast(Any, EvictOnFirstAcquire())
     result = compiler.compile_pattern("evict_me", 0)
     assert result.pattern == "evict_me"
 
@@ -310,6 +199,6 @@ def test_compile_pattern_concurrent_write_branch() -> None:
         ) -> None:
             original_lock.__exit__(exc_type, exc_val, exc_tb)
 
-    compiler._lock = cast(threading.Lock, InsertOnFirstAcquire())
+    compiler._lock = cast(Any, InsertOnFirstAcquire())
     result = compiler.compile_pattern("concurrent", 0)
     assert result.pattern == "concurrent"
