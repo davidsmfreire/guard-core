@@ -1,8 +1,8 @@
-import re
 from collections.abc import Generator
 
 import pytest
 
+from guard_core.detection_engine import safe_regex as re
 from guard_core.handlers.suspatterns_handler import (
     _CTX_CMD_INJECTION,
     _CTX_CMS_PROBING,

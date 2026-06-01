@@ -208,22 +208,6 @@ def test_analyze_code_injection_risk_valid_python() -> None:
         assert risk >= 0.3
 
 
-def test_analyze_code_injection_risk_ast_timeout() -> None:
-    analyzer = SemanticAnalyzer()
-
-    content = "some code content"
-
-    with patch("concurrent.futures.ThreadPoolExecutor") as mock_executor:
-        mock_future = MagicMock()
-        mock_future.result.side_effect = concurrent.futures.TimeoutError()
-        mock_submit = mock_executor.return_value.__enter__.return_value.submit
-        mock_submit.return_value = mock_future
-
-        risk = analyzer.analyze_code_injection_risk(content)
-
-        assert risk >= 0.2
-
-
 def test_analyze_code_injection_risk_ast_exception() -> None:
     analyzer = SemanticAnalyzer()
 
@@ -418,11 +402,10 @@ def test_analyze_code_injection_risk_ast_parse_exception() -> None:
 
 
 def test_check_ast_parsing_outer_exception_returns_zero() -> None:
+    # ast.parse now runs inline; any non-SyntaxError it raises is swallowed and
+    # contributes no risk.
     analyzer = SemanticAnalyzer()
-    with patch(
-        "concurrent.futures.ThreadPoolExecutor",
-        side_effect=RuntimeError("executor init failed"),
-    ):
+    with patch("ast.parse", side_effect=RuntimeError("parse blew up")):
         result = analyzer._check_ast_parsing_risk("harmless")
     assert result == 0.0
 

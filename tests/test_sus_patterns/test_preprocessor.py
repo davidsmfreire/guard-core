@@ -1,4 +1,3 @@
-import concurrent.futures
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -158,21 +157,6 @@ def test_extract_attack_regions_max_regions() -> None:
     regions = preprocessor.extract_attack_regions(content)
 
     assert len(regions) <= 5
-
-
-def test_extract_attack_regions_timeout() -> None:
-    preprocessor = ContentPreprocessor()
-
-    with patch("concurrent.futures.ThreadPoolExecutor") as mock_executor:
-        mock_future = MagicMock()
-        mock_future.result.side_effect = concurrent.futures.TimeoutError()
-        mock_submit = mock_executor.return_value.__enter__.return_value.submit
-        mock_submit.return_value = mock_future
-
-        content = "<script>alert(1)</script>"
-        regions = preprocessor.extract_attack_regions(content)
-
-        assert regions == []
 
 
 def test_extract_attack_regions_early_break() -> None:

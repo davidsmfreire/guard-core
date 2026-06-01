@@ -1,7 +1,8 @@
 import ast
-import re
 from collections import Counter
 from typing import Any
+
+from guard_core.detection_engine import safe_regex as re
 
 
 class SemanticAnalyzer:
@@ -94,22 +95,9 @@ class SemanticAnalyzer:
         MAX_TOKENS = 1000
         tokens = re.findall(r"\b\w+\b", content.lower())[:MAX_TOKENS]
 
-        special_patterns = []
-        import concurrent.futures
-
+        special_patterns: list[str] = []
         for _, pattern in self.attack_structures.items():
-
-            def _find_pattern(p: str, c: str) -> list[str]:
-                return re.findall(p, c, re.IGNORECASE)[:10]
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_find_pattern, pattern, content)
-                try:
-                    matches = future.result(timeout=0.1)
-                    special_patterns.extend(matches)
-                except concurrent.futures.TimeoutError:
-                    continue
-
+            special_patterns.extend(re.findall(pattern, content, re.IGNORECASE)[:10])
             if len(special_patterns) >= 50:
                 break
 
@@ -216,10 +204,13 @@ class SemanticAnalyzer:
         return False
 
     def extract_suspicious_patterns(self, content: str) -> list[dict[str, Any]]:
-        patterns = []
+        MAX_PATTERNS = 100
+        patterns: list[dict[str, Any]] = []
 
         for name, pattern in self.attack_structures.items():
             for match in re.finditer(pattern, content, re.IGNORECASE):
+                if len(patterns) >= MAX_PATTERNS:
+                    return patterns
                 context_start = max(0, match.start() - 20)
                 context_end = min(len(content), match.end() + 20)
                 patterns.append(
@@ -257,29 +248,12 @@ class SemanticAnalyzer:
             return 0.0
 
         try:
-            import concurrent.futures
-
-            def _parse_ast() -> bool:
-                try:
-                    ast.parse(content, mode="eval")
-                    return True
-                except SyntaxError:
-                    return False
-                except Exception:
-                    return False
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_parse_ast)
-                try:
-                    if future.result(timeout=0.1):
-                        return 0.3
-                except concurrent.futures.TimeoutError:
-                    return 0.2
-
+            ast.parse(content, mode="eval")
+            return 0.3
+        except SyntaxError:
+            return 0.0
         except Exception:
-            pass
-
-        return 0.0
+            return 0.0
 
     def _check_injection_keywords(self, content: str) -> float:
         injection_keywords = [

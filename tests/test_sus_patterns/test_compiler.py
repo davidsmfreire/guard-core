@@ -1,13 +1,10 @@
 import asyncio
-import concurrent.futures
-import re
-import time
 import types
-from typing import cast
-from unittest.mock import MagicMock, patch
+from typing import Any, cast
 
 import pytest
 
+from guard_core.detection_engine import safe_regex as re
 from guard_core.detection_engine.compiler import PatternCompiler
 
 
@@ -96,8 +93,12 @@ async def test_compile_pattern_concurrent_access(compiler: PatternCompiler) -> N
     assert len(compiler._compiled_cache) == 1
 
 
-def test_validate_pattern_safety_dangerous_patterns(compiler: PatternCompiler) -> None:
-    dangerous_patterns = [
+def test_validate_pattern_safety_accepts_linear_patterns(
+    compiler: PatternCompiler,
+) -> None:
+    # Patterns that catastrophically backtrack under stdlib `re` are linear
+    # under RE2, so validation now accepts them instead of rejecting them.
+    formerly_dangerous = [
         r"(.*)+",
         r"(.+)+",
         r"([a-z]*)+",
@@ -106,41 +107,27 @@ def test_validate_pattern_safety_dangerous_patterns(compiler: PatternCompiler) -
         r".+.+",
     ]
 
-    for pattern in dangerous_patterns:
+    for pattern in formerly_dangerous:
+        is_safe, reason = compiler.validate_pattern_safety(pattern)
+        assert is_safe is True
+        assert reason == "Pattern appears safe"
+
+
+def test_validate_pattern_safety_rejects_unsupported_constructs(
+    compiler: PatternCompiler,
+) -> None:
+    # RE2 has no backreferences or lookaround; such patterns are rejected
+    # rather than silently falling back to a backtracking engine.
+    unsupported = [
+        r"(?=foo)bar",
+        r"(?<=foo)bar",
+        r"(\w+)\1",
+    ]
+
+    for pattern in unsupported:
         is_safe, reason = compiler.validate_pattern_safety(pattern)
         assert is_safe is False
-        assert "dangerous" in reason.lower()
-
-
-def test_validate_pattern_safety_slow_pattern(compiler: PatternCompiler) -> None:
-    slow_pattern = r"^[a-z]+$"
-
-    call_count = 0
-    start_time = time.time()
-
-    def mock_time() -> float:
-        nonlocal call_count
-        call_count += 1
-        if call_count % 2 == 0:
-            return start_time + 0.06
-        else:
-            return start_time
-
-    with patch("time.time", side_effect=mock_time):
-        is_safe, reason = compiler.validate_pattern_safety(slow_pattern)
-        assert is_safe is False
-        assert "timed out on test string" in reason
-
-
-def test_validate_pattern_safety_exception(compiler: PatternCompiler) -> None:
-    pattern = r"test_pattern"
-
-    with patch.object(
-        compiler, "compile_pattern_sync", side_effect=Exception("Test error")
-    ):
-        is_safe, reason = compiler.validate_pattern_safety(pattern)
-        assert is_safe is False
-        assert reason == "Pattern validation failed: Test error"
+        assert "RE2" in reason
 
 
 def test_validate_pattern_safety_safe_pattern(compiler: PatternCompiler) -> None:
@@ -157,24 +144,6 @@ def test_validate_pattern_safety_safe_pattern(compiler: PatternCompiler) -> None
         assert reason == "Pattern appears safe"
 
 
-def test_validate_pattern_safety_timeout() -> None:
-    compiler = PatternCompiler()
-
-    pattern = r"test_pattern"
-
-    with patch("concurrent.futures.ThreadPoolExecutor") as mock_executor:
-        mock_future = MagicMock()
-        mock_future.result.side_effect = concurrent.futures.TimeoutError()
-        mock_executor.return_value.__enter__.return_value.submit.return_value = (
-            mock_future
-        )
-
-        is_safe, reason = compiler.validate_pattern_safety(pattern)
-
-        assert is_safe is False
-        assert "Pattern timed out on test string" in reason
-
-
 def test_validate_pattern_safety_custom_test_strings(compiler: PatternCompiler) -> None:
     pattern = r"test\d+"
     test_strings = ["test123", "test456", "test789"]
@@ -182,50 +151,6 @@ def test_validate_pattern_safety_custom_test_strings(compiler: PatternCompiler) 
     is_safe, reason = compiler.validate_pattern_safety(pattern, test_strings)
     assert is_safe is True
     assert reason == "Pattern appears safe"
-
-
-def test_create_safe_matcher(compiler: PatternCompiler) -> None:
-    pattern = r"test\d+"
-    matcher = compiler.create_safe_matcher(pattern)
-
-    result = matcher("test123")
-    assert result is not None
-    assert result.group() == "test123"
-
-    result = matcher("test")
-    assert result is None
-
-
-def test_create_safe_matcher_with_timeout(compiler: PatternCompiler) -> None:
-    pattern = r"test.*"
-    matcher = compiler.create_safe_matcher(pattern, timeout=0.1)
-
-    with patch("concurrent.futures.ThreadPoolExecutor") as mock_executor:
-        mock_future = MagicMock()
-        mock_future.result.side_effect = concurrent.futures.TimeoutError()
-        mock_future.cancel.return_value = True
-        mock_executor.return_value.__enter__.return_value.submit.return_value = (
-            mock_future
-        )
-
-        result = matcher("test123")
-        assert result is None
-        mock_future.cancel.assert_called_once()
-
-
-def test_create_safe_matcher_with_exception(compiler: PatternCompiler) -> None:
-    pattern = r"test.*"
-    matcher = compiler.create_safe_matcher(pattern)
-
-    with patch("concurrent.futures.ThreadPoolExecutor") as mock_executor:
-        mock_future = MagicMock()
-        mock_future.result.side_effect = Exception("Test error")
-        mock_executor.return_value.__enter__.return_value.submit.return_value = (
-            mock_future
-        )
-
-        result = matcher("test123")
-        assert result is None
 
 
 @pytest.mark.asyncio
@@ -247,7 +172,7 @@ async def test_batch_compile(compiler: PatternCompiler) -> None:
 async def test_batch_compile_with_validation(compiler: PatternCompiler) -> None:
     patterns = [
         r"safe_pattern\d+",
-        r"(.*)+",
+        r"(?=lookahead)unsupported",
         r"another_safe\w+",
     ]
 
@@ -331,7 +256,7 @@ async def test_compile_pattern_handles_cache_race_between_outer_and_locked_check
         ) -> None:
             await real_lock.__aexit__(exc_type, exc_val, exc_tb)
 
-    compiler._lock = cast(asyncio.Lock, _LockWrapper())
+    compiler._lock = cast(Any, _LockWrapper())
     compiled = await compiler.compile_pattern(pattern)
     assert compiled.pattern == pattern
     compiler._lock = real_lock
@@ -365,7 +290,7 @@ async def test_compile_pattern_returns_cached_entry_when_populated_during_lock_w
         ) -> None:
             await real_lock.__aexit__(exc_type, exc_val, exc_tb)
 
-    compiler._lock = cast(asyncio.Lock, _LockWrapper())
+    compiler._lock = cast(Any, _LockWrapper())
     result = await compiler.compile_pattern(pattern)
     assert result is pre_compiled
     compiler._lock = real_lock

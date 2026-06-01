@@ -1,7 +1,8 @@
 import binascii
-import re
 import unicodedata
 from typing import Any
+
+from guard_core.sync.detection_engine import safe_regex as re
 
 
 class ContentPreprocessor:
@@ -45,17 +46,15 @@ class ContentPreprocessor:
             re.compile(pattern, re.IGNORECASE) for pattern in self.attack_indicators
         ]
 
-    _BASE64_RE = re.compile(
-        r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{20,}={0,2}(?![A-Za-z0-9+/=])"
+    # RE2 has no lookaround; the token-boundary assertions that the base64 and
+    # inner-comment patterns used are enforced in the substitution callbacks
+    # below by inspecting the characters adjacent to each match.
+    _BASE64_CHARS = frozenset(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
     )
+    _BASE64_RE = re.compile(r"[A-Za-z0-9+/]{20,}={0,2}")
     _HEX_ESCAPE_RE = re.compile(r"\\x([0-9a-fA-F]{2})")
     _UNICODE_ESCAPE_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
-    _SQL_BLOCK_COMMENT_INNER_UPPER_RE = re.compile(
-        r"(?<=[A-Z])/\*.*?\*/(?=[A-Z])", re.DOTALL
-    )
-    _SQL_BLOCK_COMMENT_INNER_LOWER_RE = re.compile(
-        r"(?<=[a-z])/\*.*?\*/(?=[a-z])", re.DOTALL
-    )
     _SQL_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
     _SQL_LINE_COMMENT_RE = re.compile(r"(--|#)[^\n]*")
 
@@ -136,28 +135,15 @@ class ContentPreprocessor:
 
     def extract_attack_regions(self, content: str) -> list[tuple[int, int]]:
         max_regions = min(100, self.max_content_length // 100)
-        regions = []
+        regions: list[tuple[int, int]] = []
 
         for indicator in self.compiled_indicators:
-            import concurrent.futures
-
-            def _find_all(pattern: re.Pattern, text: str) -> list[tuple[int, int]]:
-                found: list[tuple[int, int]] = []
-                for match in pattern.finditer(text):
-                    if len(found) >= max_regions:
-                        break
-                    start = max(0, match.start() - 100)
-                    end = min(len(text), match.end() + 100)
-                    found.append((start, end))
-                return found
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_find_all, indicator, content)
-                try:
-                    indicator_regions = future.result(timeout=0.5)
-                    regions.extend(indicator_regions)
-                except concurrent.futures.TimeoutError:
-                    continue
+            for match in indicator.finditer(content):
+                if len(regions) >= max_regions:
+                    break
+                start = max(0, match.start() - 100)
+                end = min(len(content), match.end() + 100)
+                regions.append((start, end))
 
             if len(regions) >= max_regions:
                 break
@@ -242,7 +228,13 @@ class ContentPreprocessor:
     def _decode_base64_candidates(self, content: str) -> str:
         import base64
 
-        def _replace(match: re.Match[str]) -> str:
+        def _replace(match: re.Match) -> str:
+            start, end = match.start(), match.end()
+            text = match.string
+            if start > 0 and text[start - 1] in self._BASE64_CHARS:
+                return match.group(0)
+            if end < len(text) and text[end] in self._BASE64_CHARS | {"="}:
+                return match.group(0)
             token = match.group(0)
             padding = (4 - len(token) % 4) % 4
             padded = token + "=" * padding
@@ -259,7 +251,7 @@ class ContentPreprocessor:
         return self._BASE64_RE.sub(_replace, content)
 
     def _decode_hex_escapes(self, content: str) -> str:
-        def _replace(match: re.Match[str]) -> str:
+        def _replace(match: re.Match) -> str:
             try:
                 return chr(int(match.group(1), 16))
             except ValueError:
@@ -268,7 +260,7 @@ class ContentPreprocessor:
         return self._HEX_ESCAPE_RE.sub(_replace, content)
 
     def _decode_unicode_escapes(self, content: str) -> str:
-        def _replace(match: re.Match[str]) -> str:
+        def _replace(match: re.Match) -> str:
             try:
                 return chr(int(match.group(1), 16))
             except ValueError:
@@ -277,9 +269,19 @@ class ContentPreprocessor:
         return self._UNICODE_ESCAPE_RE.sub(_replace, content)
 
     def _strip_sql_comments(self, content: str) -> str:
-        content = self._SQL_BLOCK_COMMENT_INNER_UPPER_RE.sub("", content)
-        content = self._SQL_BLOCK_COMMENT_INNER_LOWER_RE.sub("", content)
-        content = self._SQL_BLOCK_COMMENT_RE.sub(" ", content)
+        def _replace_block(match: re.Match) -> str:
+            start, end = match.start(), match.end()
+            text = match.string
+            prev = text[start - 1] if start > 0 else ""
+            nxt = text[end] if end < len(text) else ""
+            # Join the surrounding tokens when a comment is wedged between two
+            # same-case letters (e.g. SE/**/LECT, un/**/ion) - a classic SQL
+            # keyword-splitting evasion. Otherwise collapse to a single space.
+            if prev.isalpha() and nxt.isalpha() and prev.isupper() == nxt.isupper():
+                return ""
+            return " "
+
+        content = self._SQL_BLOCK_COMMENT_RE.sub(_replace_block, content)
         content = self._SQL_LINE_COMMENT_RE.sub(" ", content)
         return content
 
