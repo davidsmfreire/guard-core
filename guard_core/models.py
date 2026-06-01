@@ -82,6 +82,52 @@ class SecurityConfig(BaseModel):
         description="Prefix for Redis keys to avoid collisions with other apps",
     )
 
+    redis_socket_connect_timeout: float | None = Field(
+        default=2.0,
+        ge=0.0,
+        description=(
+            "Seconds to wait establishing a Redis TCP connection before giving up. "
+            "None disables the timeout (a partitioned/black-holed Redis then blocks "
+            "the request indefinitely), so a bounded default is strongly recommended."
+        ),
+    )
+
+    redis_socket_timeout: float | None = Field(
+        default=2.0,
+        ge=0.0,
+        description=(
+            "Seconds to wait on a Redis read/write before raising. None means no "
+            "timeout. Keep this low: every blocked Redis call blocks a request."
+        ),
+    )
+
+    redis_health_check_interval: int = Field(
+        default=30,
+        ge=0,
+        description=(
+            "Seconds between health checks on pooled connections; recycles stale "
+            "sockets so the first request after an idle period doesn't fail. "
+            "0 disables health checks."
+        ),
+    )
+
+    redis_max_connections: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Cap on the Redis connection pool size. None uses redis-py's default."
+        ),
+    )
+
+    redis_retries: int = Field(
+        default=1,
+        ge=0,
+        description=(
+            "Number of retries (with exponential backoff) on transient Redis "
+            "connection/timeout errors before surfacing it. 0 disables retries."
+        ),
+    )
+
     whitelist: list[str] | None = Field(
         default=None, description="Allowed IP addresses or CIDR ranges"
     )
