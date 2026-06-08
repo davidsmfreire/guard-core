@@ -31,6 +31,66 @@ def test_sync_no_rules_logs_at_debug(caplog: pytest.LogCaptureFixture) -> None:
     assert all(r.levelno == logging.DEBUG for r in no_rules)
 
 
+def test_sync_country_verdict_logs_at_info_by_default(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from guard_core.sync.utils import _log_country_check_result
+
+    caplog.set_level(logging.DEBUG, logger="root")
+    _log_country_check_result("1.2.3.4", "PL", "not_affected")
+    records = [
+        r for r in caplog.records if "not from blocked or whitelisted" in r.message
+    ]
+    assert records
+    assert all(r.levelno == logging.INFO for r in records)
+
+
+def test_sync_country_verdict_silenced_when_level_none(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from guard_core.sync.utils import _log_country_check_result
+
+    config = MagicMock()
+    config.log_country_check_level = None
+    caplog.set_level(logging.DEBUG, logger="root")
+    _log_country_check_result("1.2.3.4", "PL", "not_affected", config)
+    _log_country_check_result("1.2.3.4", "US", "whitelisted", config)
+    assert not [
+        r
+        for r in caplog.records
+        if "whitelisted country" in r.message
+        or "not from blocked or whitelisted" in r.message
+    ]
+
+
+def test_sync_country_verdict_respects_configured_level(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from guard_core.sync.utils import _log_country_check_result
+
+    config = MagicMock()
+    config.log_country_check_level = "WARNING"
+    caplog.set_level(logging.DEBUG, logger="root")
+    _log_country_check_result("1.2.3.4", "US", "whitelisted", config)
+    records = [r for r in caplog.records if "from whitelisted country" in r.message]
+    assert records
+    assert all(r.levelno == logging.WARNING for r in records)
+
+
+def test_sync_blocked_country_always_warning_regardless_of_level(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from guard_core.sync.utils import _log_country_check_result
+
+    config = MagicMock()
+    config.log_country_check_level = None
+    caplog.set_level(logging.DEBUG, logger="root")
+    _log_country_check_result("5.5.5.5", "RU", "blocked", config)
+    records = [r for r in caplog.records if "from blocked country" in r.message]
+    assert records
+    assert all(r.levelno == logging.WARNING for r in records)
+
+
 def test_sync_spoof_warning_at_debug_for_private_source(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

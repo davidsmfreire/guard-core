@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 
 ___
 
+v3.1.2 (2026-06-08)
+-------------------
+
+Configurable country-check logging (v3.1.2)
+-------------------------------------------
+
+### Changed
+
+- **Per-request country verdicts are now configurable and routed through the `guard_core` logger.** `_log_country_check_result` previously logged whitelisted / not-affected results at `INFO` straight to the root logger (`logging.info`), so it was unreachable by named-logger levels and by `log_suspicious_level` / `log_request_level`. It now logs via `logging.getLogger("guard_core")` and honours the new `SecurityConfig.log_country_check_level` (default `"INFO"`, preserving prior behaviour). Set it to `None` to silence the routine whitelisted / not-affected chatter while keeping the genuine signal. Continuing the noise reduction from v3.1.0: blocked-country hits still log at `WARNING`, and no-rules / no-geolocation cases still log at `DEBUG`. Sync mirror updated identically.
+
+___
+
 v3.1.1 (2026-05-27)
 -------------------
 

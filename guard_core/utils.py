@@ -342,28 +342,36 @@ def _has_country_rules(config: Any) -> bool:
     return bool(config.blocked_countries or config.whitelist_countries)
 
 
-def _log_country_check_result(ip: str, country: str | None, result_type: str) -> None:
+def _log_country_check_result(
+    ip: str, country: str | None, result_type: str, config: Any = None
+) -> None:
+    logger = logging.getLogger("guard_core")
     if result_type == "no_rules":
-        logging.debug(
+        logger.debug(
             f"No countries blocked or whitelisted {ip} - "
             "No countries blocked or whitelisted"
         )
     elif result_type == "no_geolocation":
-        logging.debug(f"IP not geolocated {ip} - IP geolocation failed")
-    elif result_type == "whitelisted":
-        logging.info(
-            f"IP from whitelisted country {ip} - {country} - "
-            "IP from whitelisted country"
-        )
+        logger.debug(f"IP not geolocated {ip} - IP geolocation failed")
     elif result_type == "blocked":
-        logging.warning(
+        logger.warning(
             f"IP from blocked country {ip} - {country} - IP from blocked country"
         )
-    elif result_type == "not_affected":
-        logging.info(
-            f"IP not from blocked or whitelisted country {ip} - {country} - "
-            "IP not from blocked or whitelisted country"
-        )
+    elif result_type in ("whitelisted", "not_affected"):
+        level = getattr(config, "log_country_check_level", "INFO")
+        if level is None:
+            return
+        log = getattr(logger, level.lower())
+        if result_type == "whitelisted":
+            log(
+                f"IP from whitelisted country {ip} - {country} - "
+                "IP from whitelisted country"
+            )
+        else:
+            log(
+                f"IP not from blocked or whitelisted country {ip} - {country} - "
+                "IP not from blocked or whitelisted country"
+            )
 
 
 def _evaluate_country_access(country: str, config: Any) -> tuple[bool, str]:
@@ -397,7 +405,7 @@ async def check_ip_country(
         return False
 
     is_blocked, result_type = _evaluate_country_access(country, config)
-    _log_country_check_result(ip, country, result_type)
+    _log_country_check_result(ip, country, result_type, config)
 
     return is_blocked
 
