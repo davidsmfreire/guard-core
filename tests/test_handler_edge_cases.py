@@ -291,6 +291,7 @@ async def test_utils_detect_penetration_header_match() -> None:
             client_ip: str,
             correlation_id: str,
             enabled_categories: set[str] | None = None,
+            log_level: str | None = "WARNING",
         ) -> tuple[bool, str, list[dict]]:
             nonlocal call_count
             call_count += 1

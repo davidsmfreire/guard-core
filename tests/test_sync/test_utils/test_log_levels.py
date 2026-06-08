@@ -14,7 +14,7 @@ def test_sync_is_private_or_loopback_basic() -> None:
 def test_sync_no_geolocation_logs_at_debug(caplog: pytest.LogCaptureFixture) -> None:
     from guard_core.sync.utils import _log_country_check_result
 
-    caplog.set_level(logging.DEBUG, logger="root")
+    caplog.set_level(logging.DEBUG, logger="guard_core")
     _log_country_check_result("192.168.1.1", None, "no_geolocation")
     geo_records = [r for r in caplog.records if "not geolocated" in r.message]
     assert geo_records
@@ -24,11 +24,105 @@ def test_sync_no_geolocation_logs_at_debug(caplog: pytest.LogCaptureFixture) -> 
 def test_sync_no_rules_logs_at_debug(caplog: pytest.LogCaptureFixture) -> None:
     from guard_core.sync.utils import _log_country_check_result
 
-    caplog.set_level(logging.DEBUG, logger="root")
+    caplog.set_level(logging.DEBUG, logger="guard_core")
     _log_country_check_result("192.168.1.1", None, "no_rules")
     no_rules = [r for r in caplog.records if "No countries blocked" in r.message]
     assert no_rules
     assert all(r.levelno == logging.DEBUG for r in no_rules)
+
+
+def test_sync_country_verdict_logs_at_info_by_default(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from guard_core.sync.utils import _log_country_check_result
+
+    caplog.set_level(logging.DEBUG, logger="guard_core")
+    _log_country_check_result("1.2.3.4", "PL", "not_affected")
+    records = [
+        r for r in caplog.records if "not from blocked or whitelisted" in r.message
+    ]
+    assert records
+    assert all(r.levelno == logging.INFO for r in records)
+
+
+def test_sync_country_verdict_silenced_when_level_none(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from guard_core.sync.utils import _log_country_check_result
+
+    config = MagicMock()
+    config.log_country_check_level = None
+    caplog.set_level(logging.DEBUG, logger="guard_core")
+    _log_country_check_result("1.2.3.4", "PL", "not_affected", config)
+    _log_country_check_result("1.2.3.4", "US", "whitelisted", config)
+    assert not [
+        r
+        for r in caplog.records
+        if "whitelisted country" in r.message
+        or "not from blocked or whitelisted" in r.message
+    ]
+
+
+def test_sync_country_verdict_respects_configured_level(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from guard_core.sync.utils import _log_country_check_result
+
+    config = MagicMock()
+    config.log_country_check_level = "WARNING"
+    caplog.set_level(logging.DEBUG, logger="guard_core")
+    _log_country_check_result("1.2.3.4", "US", "whitelisted", config)
+    records = [r for r in caplog.records if "from whitelisted country" in r.message]
+    assert records
+    assert all(r.levelno == logging.WARNING for r in records)
+
+
+def test_sync_blocked_country_always_warning_regardless_of_level(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from guard_core.sync.utils import _log_country_check_result
+
+    config = MagicMock()
+    config.log_country_check_level = None
+    caplog.set_level(logging.DEBUG, logger="guard_core")
+    _log_country_check_result("5.5.5.5", "RU", "blocked", config)
+    records = [r for r in caplog.records if "from blocked country" in r.message]
+    assert records
+    assert all(r.levelno == logging.WARNING for r in records)
+
+
+def test_sync_attack_detected_log_respects_level(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from guard_core.sync import utils
+
+    def fake_enhanced(*args, **kwargs):
+        return True, "trigger", [{"type": "regex", "category": "sqli"}]
+
+    monkeypatch.setattr(utils, "_check_value_enhanced", fake_enhanced)
+    caplog.set_level(logging.DEBUG, logger="guard_core")
+    utils._check_request_component(
+        "x", "query_param:q", "query param 'q'", "1.2.3.4", "cid", None, "WARNING"
+    )
+    records = [r for r in caplog.records if "Potential attack detected" in r.message]
+    assert records
+    assert all(r.levelno == logging.WARNING for r in records)
+
+
+def test_sync_attack_detected_log_silenced_when_level_none(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from guard_core.sync import utils
+
+    def fake_enhanced(*args, **kwargs):
+        return True, "trigger", [{"type": "regex", "category": "sqli"}]
+
+    monkeypatch.setattr(utils, "_check_value_enhanced", fake_enhanced)
+    caplog.set_level(logging.DEBUG, logger="guard_core")
+    utils._check_request_component(
+        "x", "query_param:q", "query param 'q'", "1.2.3.4", "cid", None, None
+    )
+    assert not [r for r in caplog.records if "Potential attack detected" in r.message]
 
 
 def test_sync_spoof_warning_at_debug_for_private_source(
@@ -46,7 +140,7 @@ def test_sync_spoof_warning_at_debug_for_private_source(
     config.trusted_proxies = ["10.0.0.1"]
     config.trusted_proxy_depth = 1
 
-    caplog.set_level(logging.DEBUG, logger="root")
+    caplog.set_level(logging.DEBUG, logger="guard_core")
     extract_client_ip(request, config, agent_handler=None)
     spoof_records = [r for r in caplog.records if "Potential IP spoof" in r.message]
     assert spoof_records
@@ -68,7 +162,7 @@ def test_sync_spoof_warning_at_warning_for_public_source(
     config.trusted_proxies = ["10.0.0.1"]
     config.trusted_proxy_depth = 1
 
-    caplog.set_level(logging.DEBUG, logger="root")
+    caplog.set_level(logging.DEBUG, logger="guard_core")
     extract_client_ip(request, config, agent_handler=None)
     spoof_records = [r for r in caplog.records if "Potential IP spoof" in r.message]
     assert spoof_records
