@@ -8,11 +8,12 @@ ___
 v3.2.0 (2026-06-23)
 -------------------
 
-Cloud-IP region scoping, IP allow-list correctness, and async/sync mirror parity (v3.2.0)
------------------------------------------------------------------------------------------
+Cloud-IP region scoping, IP allow-list correctness, async/sync mirror parity, and agent-error clarity (v3.2.0)
+--------------------------------------------------------------------------------------------------------------
 
 ### Added
 
+- **Observable agent and middleware errors.** New `SecurityConfig.on_error` — one best-effort `on_error(stage, exc, context)` hook (`stage` ∈ `agent_init` / `geoip` / `transport_send` / `encryption`) invoked at failure points and guaranteed never to propagate into the request path (a hook that raises is caught and logged). New `SecurityConfig.agent_strict` (default `False`): adapters raise at initialization instead of silently degrading to agent-off when an enabled agent cannot be constructed.
 - **Region/scope carve-outs for cloud-IP blocking.** `block_cloud_providers` and `@block_clouds` now accept flat-string region selectors: a bare provider (`"GCP"`) blocks the whole provider unchanged, while a carve-out (`"GCP:!us-central1"`) blocks the provider *except* that region. Region scoping is derived from the real `scope` field in GCP's `cloud.json` and the `region` field in AWS's `ip-ranges.json` (no hardcoded region lists); Azure remains provider-level. The `network`→`region` index is built at refresh/index time so per-request `is_cloud_ip` stays O(current) — a single dict lookup on a match. `block_cloud_providers` is now typed `set[str]` (was `set[CloudProvider]`); existing bare-provider configs are unchanged. Region data survives Redis via inline `"network|region"` encoding under versioned keys (`cloud_ip_v2` / `cloud_ranges_v2`) — pre-upgrade cache entries are ignored and refetched within `cloud_ip_refresh_interval`, and older replicas never read the new value shape during a rolling deploy. Async and sync mirrors updated identically.
 
 ### Fixed
@@ -20,6 +21,9 @@ Cloud-IP region scoping, IP allow-list correctness, and async/sync mirror parity
 - **IP allow-list is now reliably honored.** An explicit whitelist match overrides the blacklist (dynamic IP bans, evaluated earlier, still win), applied consistently to the global path (`is_ip_allowed`) and the route path (`check_route_ip_access`) — previously the blacklist was evaluated first, so a whitelisted IP that also fell inside a blacklisted CIDR was blocked. Bare-IP matching now uses parsed `ip_address()` equality instead of raw string comparison, so IPv6 compact and expanded forms (`::1` vs `0:0:0:0:0:0:0:1`) match correctly. The global and route-level matchers share one primitive (`utils._ip_in_list`) so they cannot drift, and precedence is documented in the `SecurityConfig.whitelist` / `blacklist` field descriptions. Sync mirror updated identically.
 - **`X-Forwarded-For` client-IP extraction honors `trusted_proxy_depth`.** `_extract_from_forwarded_header` previously returned the leftmost (client-spoofable) `X-Forwarded-For` entry regardless of `trusted_proxy_depth`; it now returns the `trusted_proxy_depth`-th entry from the right, so a client prepending fake entries can no longer defeat the IP allow-list behind trusted proxies.
 - **Restored async/sync mirror parity and enforced it in CI.** The generated `guard_core.sync` mirror had drifted from its async source (`make check-sync` was failing across ~33 files). Repaired the `unasync` generator (bare `asyncio.Lock` annotations, `from guard_core.handlers import …` package imports, the `CloudIpStoreFactory` alias, the decorators logger string, and AsyncMock `await_count`/`await_args` assertions) and excluded the genuinely hand-maintained sync files — the `RateLimitManager` threading lock and its tests — that the regex transform cannot reproduce. A new `check-sync` pre-commit hook now fails CI on any future async/sync drift.
+- **Clear, actionable error when the agent package is missing.** `SecurityConfig.to_agent_config()` now raises `AgentPackageNotInstalledError` (naming the package and install command) instead of returning an ambiguous `None`, so a missing `guard-agent` can no longer be misreported as an "invalid config / check `agent_api_key`" error by adapters.
+- **GeoIP lookups no longer fail silently.** `SecurityEventBus._lookup_country` now logs at warning and fires the `on_error` hook (`stage="geoip"`) instead of swallowing the exception with a bare `except Exception: return None`.
+- **Replaced the deprecated redis `setex` call** with `set(..., ex=ttl)` in both the async and sync Redis handlers, clearing the redis-py `DeprecationWarning`.
 
 ___
 
