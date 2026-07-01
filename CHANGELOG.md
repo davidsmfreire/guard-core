@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 
 ___
 
+v3.4.0 (2026-07-02)
+-------------------
+
+Body-scan location scoping, recursive/form/multipart detection exclusion, and live detection configuration (v3.4.0)
+------------------------------------------------------------------------------------------------------------------
+
+### Added
+
+- **`detection_scan_body` — location-scoped penetration detection.** New `SecurityConfig.detection_scan_body` (`bool`, default `True`), with a per-route override via `RouteConfig.detection_scan_body` and the `detection_exclusion(scan_body=…)` decorator argument. When set to `False`, penetration detection scans the URL path, query parameters, and headers but never reads or matches the request body — removing the entire request-body false-positive class in a single switch, regardless of body shape (JSON, form, multipart), while preserving scanner/recon protection on the URL surface. The default `True` preserves prior behavior. Async and sync mirrors updated identically.
+
+### Changed
+
+- **`excluded_detection_body_fields` now matches nested, form, and multipart bodies.** Previously only top-level JSON keys were excluded, so the allowlist could not reach content nested inside arrays/objects, and non-JSON bodies were scanned as an opaque blob. Excluded field names are now matched at any JSON nesting depth, applied to `application/x-www-form-urlencoded` field names (after decoding), and applied to `multipart/form-data` text-part names (file parts are skipped, never scanned). Bodies that are not structured or not parseable still fall back to a whole-body scan. The allowlist is now effective for OpenAI-style `{"messages":[{"content": …}]}` payloads, HTML form submissions, and small text uploads. Async and sync mirrors updated identically.
+- **Detection settings now take effect in production (behavior change).** The suspicious-pattern engine is configured from `SecurityConfig` at middleware startup, so `detection_threat_score_threshold`, the content preprocessor, and the semantic analyzer now apply to live traffic. Previously the process-global detection singleton was constructed once at import with no config and never reconfigured, so those settings were silently inert outside of tests. As a result, detection now runs in its enhanced mode in production: the default `detection_threat_score_threshold` is unchanged (`1.0`), but the content preprocessor (which normalizes and decodes payloads before matching, catching encoded evasion) and the pure-Python semantic analyzer are now active for every request. No new dependencies are required. Review your detection logs after upgrading and tune `detection_threat_score_threshold`, the `excluded_detection_*` sets, or `detection_scan_body` if the tighter matching changes what is flagged. Async and sync mirrors updated identically.
+
+___
+
 v3.3.0 (2026-07-01)
 -------------------
 
