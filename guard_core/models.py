@@ -581,7 +581,17 @@ class SecurityConfig(BaseModel):
     excluded_detection_body_fields: set[str] = Field(
         default_factory=set,
         description=(
-            "Top-level JSON body keys to exclude from penetration detection scanning."
+            "JSON body keys to exclude from penetration detection scanning. "
+            "Matched at any nesting depth, and applied to x-www-form-urlencoded "
+            "and multipart text-part field names as well."
+        ),
+    )
+    detection_scan_body: bool = Field(
+        default=True,
+        description=(
+            "Scan the request body during penetration detection. Set False to "
+            "restrict detection to the URL path, query params, and headers; the "
+            "body is then never read or matched, regardless of its shape."
         ),
     )
     enabled_detection_categories: set[str] = Field(

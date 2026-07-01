@@ -6,17 +6,47 @@ from typing import Any
 import pytest
 from pytest import TempPathFactory
 
+from guard_core.handlers import suspatterns_handler as _suspatterns_module
 from guard_core.handlers.cloud_handler import cloud_handler
 from guard_core.handlers.ipban_handler import IPBanManager
 from guard_core.handlers.ipinfo_handler import IPInfoManager
 from guard_core.handlers.ratelimit_handler import rate_limit_handler
 from guard_core.handlers.redis_handler import RedisManager
-from guard_core.handlers.suspatterns_handler import sus_patterns_handler
+from guard_core.handlers.suspatterns_handler import (
+    SusPatternsManager,
+    sus_patterns_handler,
+)
 from guard_core.models import SecurityConfig
 
 IPINFO_TOKEN = os.getenv("IPINFO_TOKEN") or "test_token"
 REDIS_URL = os.getenv("REDIS_URL") or "redis://localhost:6379"
 REDIS_PREFIX = os.getenv("REDIS_PREFIX") or "test:guard_core:"
+
+_DETECTION_SINGLETON_FIELDS = (
+    "_compiler",
+    "_preprocessor",
+    "_semantic_analyzer",
+    "_performance_monitor",
+    "_semantic_threshold",
+    "_threat_score_threshold",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_detection_singleton() -> Any:
+    handler = _suspatterns_module.sus_patterns_handler
+    saved_fields = {
+        name: getattr(handler, name) for name in _DETECTION_SINGLETON_FIELDS
+    }
+    saved_instance = SusPatternsManager._instance
+    saved_config = SusPatternsManager._config
+    saved_global = _suspatterns_module.sus_patterns_handler
+    yield
+    for name, value in saved_fields.items():
+        setattr(handler, name, value)
+    SusPatternsManager._instance = saved_instance
+    SusPatternsManager._config = saved_config
+    _suspatterns_module.sus_patterns_handler = saved_global
 
 
 class MockState:

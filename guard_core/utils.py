@@ -656,6 +656,16 @@ def _resolve_enabled_categories(
     return None
 
 
+def _resolve_scan_body(
+    config: "SecurityConfig | None", route_config: "RouteConfig | None"
+) -> bool:
+    if route_config is not None and route_config.detection_scan_body is not None:
+        return route_config.detection_scan_body
+    if config is not None:
+        return config.detection_scan_body
+    return True
+
+
 _DEFAULT_EXCLUDED_HEADERS: frozenset[str] = frozenset(
     {
         "host",
@@ -732,38 +742,27 @@ async def _scan_headers(
     return False, "", []
 
 
-async def _scan_request_body(
-    raw_body: str,
-    excluded_body_fields: set[str],
+async def _scan_body_field(
+    value: str,
+    label: str,
     enabled_categories: set[str] | None,
     client_ip: str,
     correlation_id: str,
 ) -> tuple[bool, str, list[dict]]:
-    import json
+    detected, trigger, threats = await _check_request_component(
+        value, "request_body", label, client_ip, correlation_id, enabled_categories
+    )
+    if detected:
+        return True, f"Request body field '{label}': {trigger}", threats
+    return False, "", []
 
-    parsed_body: Any | None = None
-    if excluded_body_fields:
-        try:
-            parsed_body = json.loads(raw_body)
-        except Exception:
-            parsed_body = None
 
-    if isinstance(parsed_body, dict):
-        for key, value in parsed_body.items():
-            if str(key).lower() in excluded_body_fields:
-                continue
-            detected, trigger, threats = await _check_request_component(
-                str(value),
-                "request_body",
-                f"request body field '{key}'",
-                client_ip,
-                correlation_id,
-                enabled_categories,
-            )
-            if detected:
-                return True, f"Request body field '{key}': {trigger}", threats
-        return False, "", []
-
+async def _scan_blob_body(
+    raw_body: str,
+    enabled_categories: set[str] | None,
+    client_ip: str,
+    correlation_id: str,
+) -> tuple[bool, str, list[dict]]:
     detected, trigger, threats = await _check_request_component(
         raw_body,
         "request_body",
@@ -775,6 +774,165 @@ async def _scan_request_body(
     if detected:
         return True, f"Request body: {trigger}", threats
     return False, "", []
+
+
+async def _scan_json_value(
+    value: Any,
+    key_label: str,
+    excluded_body_fields: set[str],
+    enabled_categories: set[str] | None,
+    client_ip: str,
+    correlation_id: str,
+) -> tuple[bool, str, list[dict]]:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if str(key).lower() in excluded_body_fields:
+                continue
+            hit = await _scan_json_value(
+                item,
+                str(key),
+                excluded_body_fields,
+                enabled_categories,
+                client_ip,
+                correlation_id,
+            )
+            if hit[0]:
+                return hit
+        return False, "", []
+    if isinstance(value, list):
+        for item in value:
+            hit = await _scan_json_value(
+                item,
+                key_label,
+                excluded_body_fields,
+                enabled_categories,
+                client_ip,
+                correlation_id,
+            )
+            if hit[0]:
+                return hit
+        return False, "", []
+    return await _scan_body_field(
+        str(value), key_label, enabled_categories, client_ip, correlation_id
+    )
+
+
+async def _scan_form_body(
+    raw_body: str,
+    excluded_body_fields: set[str],
+    enabled_categories: set[str] | None,
+    client_ip: str,
+    correlation_id: str,
+) -> tuple[bool, str, list[dict]]:
+    from urllib.parse import parse_qsl
+
+    for name, value in parse_qsl(raw_body, keep_blank_values=True):
+        if name.lower() in excluded_body_fields:
+            continue
+        hit = await _scan_body_field(
+            value, name, enabled_categories, client_ip, correlation_id
+        )
+        if hit[0]:
+            return hit
+    return False, "", []
+
+
+def _multipart_text_parts(
+    raw_body: str, content_type: str
+) -> list[tuple[str, str]] | None:
+    from email.parser import Parser
+    from email.policy import compat32
+
+    header = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n"
+    message = Parser(policy=compat32).parsestr(header + raw_body)
+    if not message.is_multipart():
+        return None
+    parts: list[tuple[str, str]] = []
+    for part in message.walk():
+        if part.is_multipart() or part.get_filename():
+            continue
+        name = part.get_param("name", header="content-disposition")
+        payload = part.get_payload(decode=False)
+        if name is None or not isinstance(payload, str):
+            continue
+        parts.append((str(name), payload))
+    return parts
+
+
+async def _scan_multipart_body(
+    raw_body: str,
+    content_type: str,
+    excluded_body_fields: set[str],
+    enabled_categories: set[str] | None,
+    client_ip: str,
+    correlation_id: str,
+) -> tuple[bool, str, list[dict]]:
+    parts = _multipart_text_parts(raw_body, content_type)
+    if parts is None:
+        return await _scan_blob_body(
+            raw_body, enabled_categories, client_ip, correlation_id
+        )
+    for name, value in parts:
+        if name.lower() in excluded_body_fields:
+            continue
+        hit = await _scan_body_field(
+            value, name, enabled_categories, client_ip, correlation_id
+        )
+        if hit[0]:
+            return hit
+    return False, "", []
+
+
+async def _scan_request_body(
+    raw_body: str,
+    content_type: str,
+    excluded_body_fields: set[str],
+    enabled_categories: set[str] | None,
+    client_ip: str,
+    correlation_id: str,
+) -> tuple[bool, str, list[dict]]:
+    import json
+
+    if not excluded_body_fields:
+        return await _scan_blob_body(
+            raw_body, enabled_categories, client_ip, correlation_id
+        )
+
+    lowered = content_type.lower()
+    if "application/x-www-form-urlencoded" in lowered:
+        return await _scan_form_body(
+            raw_body,
+            excluded_body_fields,
+            enabled_categories,
+            client_ip,
+            correlation_id,
+        )
+    if "multipart/form-data" in lowered:
+        return await _scan_multipart_body(
+            raw_body,
+            content_type,
+            excluded_body_fields,
+            enabled_categories,
+            client_ip,
+            correlation_id,
+        )
+
+    try:
+        parsed_body = json.loads(raw_body)
+    except Exception:
+        parsed_body = None
+    if isinstance(parsed_body, (dict, list)):
+        return await _scan_json_value(
+            parsed_body,
+            "",
+            excluded_body_fields,
+            enabled_categories,
+            client_ip,
+            correlation_id,
+        )
+    return await _scan_blob_body(
+        raw_body, enabled_categories, client_ip, correlation_id
+    )
 
 
 def _threat_category(threat: dict) -> str | None:
@@ -873,6 +1031,9 @@ async def detect_penetration_attempt(
     if detected:
         return _build_detection_hit(trigger, threats)
 
+    if not _resolve_scan_body(config, route_config):
+        return _build_detection_miss()
+
     if _body_exceeds_inspection_cap(request, config):
         return _build_detection_miss()
 
@@ -881,8 +1042,14 @@ async def detect_penetration_attempt(
     except Exception:
         return _build_detection_miss()
 
+    content_type = request.headers.get("content-type") or ""
     detected, trigger, threats = await _scan_request_body(
-        raw_body, excluded_body_fields, enabled_categories, client_ip, correlation_id
+        raw_body,
+        content_type,
+        excluded_body_fields,
+        enabled_categories,
+        client_ip,
+        correlation_id,
     )
     if detected:
         return _build_detection_hit(trigger, threats)

@@ -42,6 +42,7 @@ class RouteConfig:
         self.excluded_detection_params: set[str] | None = None
         self.excluded_detection_body_fields: set[str] | None = None
         self.enabled_detection_categories: set[str] | None = None
+        self.detection_scan_body: bool | None = None
 
 
 class BaseSecurityMixin:

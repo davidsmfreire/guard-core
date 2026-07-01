@@ -1,3 +1,4 @@
+import json
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -140,6 +141,168 @@ async def test_route_params_override_global_params() -> None:
     _result = await detect_penetration_attempt(request, config, route_config)
     detected = _result.is_threat
     assert detected is True
+
+
+async def test_scan_body_disabled_suppresses_body_match() -> None:
+    config = SecurityConfig(detection_scan_body=False)
+    request = _FakeRequest(body_bytes=b'{"id": "<script>alert(1)</script>"}')
+    _result = await detect_penetration_attempt(request, config)
+    assert _result.is_threat is False
+
+
+async def test_scan_body_disabled_still_scans_query_params() -> None:
+    config = SecurityConfig(detection_scan_body=False)
+    request = _FakeRequest(query_params={"q": "<script>alert(1)</script>"})
+    _result = await detect_penetration_attempt(request, config)
+    assert _result.is_threat is True
+
+
+async def test_scan_body_enabled_by_default_scans_body() -> None:
+    config = SecurityConfig()
+    request = _FakeRequest(body_bytes=b'{"id": "<script>alert(1)</script>"}')
+    _result = await detect_penetration_attempt(request, config)
+    assert _result.is_threat is True
+
+
+async def test_route_scan_body_override_disables_body() -> None:
+    config = SecurityConfig(detection_scan_body=True)
+    route_config = RouteConfig()
+    route_config.detection_scan_body = False
+    request = _FakeRequest(body_bytes=b'{"id": "<script>alert(1)</script>"}')
+    _result = await detect_penetration_attempt(request, config, route_config)
+    assert _result.is_threat is False
+
+
+async def test_route_scan_body_override_enables_body() -> None:
+    config = SecurityConfig(detection_scan_body=False)
+    route_config = RouteConfig()
+    route_config.detection_scan_body = True
+    request = _FakeRequest(body_bytes=b'{"id": "<script>alert(1)</script>"}')
+    _result = await detect_penetration_attempt(request, config, route_config)
+    assert _result.is_threat is True
+
+
+async def test_scan_body_defaults_true_when_config_absent() -> None:
+    request = _FakeRequest(body_bytes=b'{"id": "<script>alert(1)</script>"}')
+    _result = await detect_penetration_attempt(request)
+    assert _result.is_threat is True
+
+
+_JSON = {"content-type": "application/json"}
+_FORM = {"content-type": "application/x-www-form-urlencoded"}
+
+
+def _multipart(boundary: str, *parts: str) -> tuple[bytes, dict[str, str]]:
+    body = "".join(f"--{boundary}\r\n{p}\r\n" for p in parts) + f"--{boundary}--\r\n"
+    return body.encode(), {"content-type": f"multipart/form-data; boundary={boundary}"}
+
+
+async def test_excluded_body_field_suppresses_nested_match() -> None:
+    config = SecurityConfig(excluded_detection_body_fields={"content"})
+    body = json.dumps(
+        {"messages": [{"role": "user", "content": "<script>alert(1)</script>"}]}
+    ).encode()
+    request = _FakeRequest(body_bytes=body, headers=_JSON)
+    _result = await detect_penetration_attempt(request, config)
+    assert _result.is_threat is False
+
+
+async def test_nested_non_excluded_field_still_matches() -> None:
+    config = SecurityConfig(excluded_detection_body_fields={"content"})
+    body = json.dumps({"outer": {"note": "<script>alert(1)</script>"}}).encode()
+    request = _FakeRequest(body_bytes=body, headers=_JSON)
+    _result = await detect_penetration_attempt(request, config)
+    assert _result.is_threat is True
+
+
+async def test_top_level_json_array_recurses() -> None:
+    config = SecurityConfig(excluded_detection_body_fields={"safe"})
+    body = json.dumps([{"note": "<script>alert(1)</script>"}]).encode()
+    request = _FakeRequest(body_bytes=body, headers=_JSON)
+    _result = await detect_penetration_attempt(request, config)
+    assert _result.is_threat is True
+
+
+async def test_non_excluded_form_field_matches_decoded() -> None:
+    config = SecurityConfig(excluded_detection_body_fields={"other"})
+    body = b"message=%3Cscript%3Ealert(1)%3C%2Fscript%3E&other=hi"
+    request = _FakeRequest(body_bytes=body, headers=_FORM)
+    _result = await detect_penetration_attempt(request, config)
+    assert _result.is_threat is True
+
+
+async def test_excluded_form_field_suppresses_decoded_match() -> None:
+    config = SecurityConfig(excluded_detection_body_fields={"message"})
+    body = b"message=%3Cscript%3Ealert(1)%3C%2Fscript%3E&other=hi"
+    request = _FakeRequest(body_bytes=body, headers=_FORM)
+    _result = await detect_penetration_attempt(request, config)
+    assert _result.is_threat is False
+
+
+async def test_multipart_file_part_not_scanned() -> None:
+    config = SecurityConfig(excluded_detection_body_fields={"unused"})
+    body, headers = _multipart(
+        "B0",
+        'Content-Disposition: form-data; name="file"; filename="a.txt"\r\n'
+        "Content-Type: text/plain\r\n\r\n<script>alert(1)</script>",
+    )
+    request = _FakeRequest(body_bytes=body, headers=headers)
+    _result = await detect_penetration_attempt(request, config)
+    assert _result.is_threat is False
+
+
+async def test_multipart_text_part_excluded_suppressed() -> None:
+    config = SecurityConfig(excluded_detection_body_fields={"note"})
+    body, headers = _multipart(
+        "B0",
+        'Content-Disposition: form-data; name="note"\r\n\r\n<script>alert(1)</script>',
+    )
+    request = _FakeRequest(body_bytes=body, headers=headers)
+    _result = await detect_penetration_attempt(request, config)
+    assert _result.is_threat is False
+
+
+async def test_multipart_text_part_non_excluded_matches() -> None:
+    config = SecurityConfig(excluded_detection_body_fields={"other"})
+    body, headers = _multipart(
+        "B0",
+        'Content-Disposition: form-data; name="note"\r\n\r\n<script>alert(1)</script>',
+    )
+    request = _FakeRequest(body_bytes=body, headers=headers)
+    _result = await detect_penetration_attempt(request, config)
+    assert _result.is_threat is True
+
+
+async def test_multipart_unparseable_body_falls_back_to_blob() -> None:
+    config = SecurityConfig(excluded_detection_body_fields={"unused"})
+    request = _FakeRequest(
+        body_bytes=b"<script>alert(1)</script>",
+        headers={"content-type": "multipart/form-data; boundary=Z9"},
+    )
+    _result = await detect_penetration_attempt(request, config)
+    assert _result.is_threat is True
+
+
+async def test_multipart_part_without_name_is_skipped() -> None:
+    config = SecurityConfig(excluded_detection_body_fields={"unused"})
+    body, headers = _multipart(
+        "B0", "Content-Disposition: form-data\r\n\r\n<script>alert(1)</script>"
+    )
+    request = _FakeRequest(body_bytes=body, headers=headers)
+    _result = await detect_penetration_attempt(request, config)
+    assert _result.is_threat is False
+
+
+async def test_multipart_scans_second_text_part_when_first_is_clean() -> None:
+    config = SecurityConfig(excluded_detection_body_fields={"unused"})
+    body, headers = _multipart(
+        "B0",
+        'Content-Disposition: form-data; name="a"\r\n\r\nhello world',
+        'Content-Disposition: form-data; name="b"\r\n\r\n<script>alert(1)</script>',
+    )
+    request = _FakeRequest(body_bytes=body, headers=headers)
+    _result = await detect_penetration_attempt(request, config)
+    assert _result.is_threat is True
 
 
 async def test_route_categories_override_global_categories() -> None:

@@ -454,34 +454,46 @@ class SusPatternsManager:
             cls._config = config
 
             if config and hasattr(config, "detection_compiler_timeout"):
-                cls._instance._compiler = PatternCompiler(
-                    default_timeout=config.detection_compiler_timeout,
-                    max_cache_size=config.detection_max_tracked_patterns,
-                )
-                cls._instance._preprocessor = ContentPreprocessor(
-                    max_content_length=config.detection_max_content_length,
-                    preserve_attack_patterns=config.detection_preserve_attack_patterns,
-                )
-                cls._instance._semantic_analyzer = SemanticAnalyzer()
-                cls._instance._performance_monitor = PerformanceMonitor(
-                    anomaly_threshold=config.detection_anomaly_threshold,
-                    slow_pattern_threshold=config.detection_slow_pattern_threshold,
-                    history_size=config.detection_monitor_history_size,
-                    max_tracked_patterns=config.detection_max_tracked_patterns,
-                )
-                cls._instance._semantic_threshold = config.detection_semantic_threshold
-                cls._instance._threat_score_threshold = (
-                    config.detection_threat_score_threshold
-                )
+                cls._apply_enhanced_config(cls._instance, config)
             else:
-                cls._instance._compiler = None
-                cls._instance._preprocessor = None
-                cls._instance._semantic_analyzer = None
-                cls._instance._performance_monitor = None
-                cls._instance._semantic_threshold = 0.7
-                cls._instance._threat_score_threshold = 1.0
+                cls._apply_legacy_config(cls._instance)
 
         return cls._instance
+
+    @staticmethod
+    def _apply_enhanced_config(instance: "SusPatternsManager", config: Any) -> None:
+        instance._compiler = PatternCompiler(
+            default_timeout=config.detection_compiler_timeout,
+            max_cache_size=config.detection_max_tracked_patterns,
+        )
+        instance._preprocessor = ContentPreprocessor(
+            max_content_length=config.detection_max_content_length,
+            preserve_attack_patterns=config.detection_preserve_attack_patterns,
+        )
+        instance._semantic_analyzer = SemanticAnalyzer()
+        instance._performance_monitor = PerformanceMonitor(
+            anomaly_threshold=config.detection_anomaly_threshold,
+            slow_pattern_threshold=config.detection_slow_pattern_threshold,
+            history_size=config.detection_monitor_history_size,
+            max_tracked_patterns=config.detection_max_tracked_patterns,
+        )
+        instance._semantic_threshold = config.detection_semantic_threshold
+        instance._threat_score_threshold = config.detection_threat_score_threshold
+
+    @staticmethod
+    def _apply_legacy_config(instance: "SusPatternsManager") -> None:
+        instance._compiler = None
+        instance._preprocessor = None
+        instance._semantic_analyzer = None
+        instance._performance_monitor = None
+        instance._semantic_threshold = 0.7
+        instance._threat_score_threshold = 1.0
+
+    def configure(self, config: Any) -> None:
+        if config is None or not hasattr(config, "detection_compiler_timeout"):
+            return
+        SusPatternsManager._config = config
+        self._apply_enhanced_config(self, config)
 
     async def initialize_redis(self, redis_handler: Any) -> None:
         self.redis_handler = redis_handler

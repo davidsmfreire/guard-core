@@ -301,11 +301,13 @@ def test_get_performance_stats_none() -> None:
     SusPatternsManager._instance = None
 
 
-def test_get_performance_stats_with_monitor() -> None:
-    manager = sus_patterns_handler
+def test_get_performance_stats_with_monitor(
+    sus_patterns_manager_with_detection: SusPatternsManager,
+) -> None:
+    manager = sus_patterns_manager_with_detection
 
     stats = manager.get_performance_stats()
-    assert stats is None
+    assert stats is not None
 
 
 def test_pattern_timeout_with_compiler(

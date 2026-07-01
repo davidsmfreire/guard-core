@@ -153,7 +153,14 @@ class HandlerInitializer:
             return cast(SyncCloudIpStoreProtocol, factory(self.redis_handler))
         return cast(SyncCloudIpStoreProtocol, store)
 
+    def _configure_detection(self) -> None:
+        from guard_core.sync.handlers.suspatterns_handler import sus_patterns_handler
+
+        sus_patterns_handler.configure(self.config)
+
     def initialize_redis_handlers(self) -> None:
+        self._configure_detection()
+
         if not (self.config.enable_redis and self.redis_handler):
             return
 
