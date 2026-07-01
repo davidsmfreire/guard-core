@@ -2,6 +2,7 @@ import html
 import ipaddress
 import logging
 import re
+import threading
 from datetime import datetime, timezone
 from typing import Any
 
@@ -186,6 +187,9 @@ class CloudManager:
     logger: logging.Logger
     last_updated: dict[str, datetime | None]
     _store: SyncCloudIpStoreProtocol | None
+    _refresh_task: threading.Thread | None
+    _refresh_in_flight: bool
+    _refresh_lock: threading.Lock
 
     def __new__(cls: type["CloudManager"]) -> "CloudManager":
         if cls._instance is None:
@@ -203,10 +207,47 @@ class CloudManager:
             cls._instance.agent_handler = None
             cls._instance.logger = logging.getLogger("guard_core.sync.handlers.cloud")
             cls._instance._store = InMemoryCloudIpStore()
+            cls._instance._refresh_task = None
+            cls._instance._refresh_in_flight = False
+            cls._instance._refresh_lock = threading.Lock()
         return cls._instance
 
     def set_store(self, store: SyncCloudIpStoreProtocol) -> None:
         self._store = store
+
+    def schedule_refresh(
+        self, providers: set[str] = _ALL_PROVIDERS, ttl: int = 3600
+    ) -> bool:
+        """Refresh cloud IP ranges in the background without blocking the caller.
+
+        Cloud-provider range fetches are multi-second network calls; running them
+        inline on the request path blocks request handling for every caller. This
+        fires the refresh as a single-flight background task instead: while one is in
+        flight, further calls are no-ops. The gate is lock-guarded so concurrent
+        callers (multi-threaded sync deployments) can't start duplicate refreshes.
+        Returns True if a task was started.
+        """
+
+        def _run_refresh() -> None:
+            try:
+                self.refresh_async(providers, ttl=ttl)
+            except Exception:
+                self.logger.exception("Background cloud IP refresh failed")
+            finally:
+                self._refresh_in_flight = False
+
+        with self._refresh_lock:
+            if self._refresh_in_flight:
+                return False
+            try:
+                self._refresh_task = threading.Thread(target=_run_refresh, daemon=True)
+
+                self._refresh_task.start()
+            except RuntimeError:
+                self.logger.exception("Could not schedule cloud IP refresh")
+                return False
+            self._refresh_in_flight = True
+            return True
 
     def _log_range_changes(
         self,
