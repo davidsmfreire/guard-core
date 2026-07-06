@@ -10,6 +10,78 @@ Release Notes
 
 ___
 
+v3.4.0 (2026-07-02)
+-------------------
+
+Body-scan location scoping, recursive/form/multipart detection exclusion, and live detection configuration (v3.4.0)
+------------------------------------------------------------------------------------------------------------------
+
+### Added
+
+- **`detection_scan_body` — location-scoped penetration detection.** New `SecurityConfig.detection_scan_body` (`bool`, default `True`), with a per-route override via `RouteConfig.detection_scan_body` and the `detection_exclusion(scan_body=…)` decorator argument. When set to `False`, penetration detection scans the URL path, query parameters, and headers but never reads or matches the request body — removing the entire request-body false-positive class in a single switch, regardless of body shape (JSON, form, multipart), while preserving scanner/recon protection on the URL surface. The default `True` preserves prior behavior. Async and sync mirrors updated identically.
+
+### Changed
+
+- **`excluded_detection_body_fields` now matches nested, form, and multipart bodies.** Previously only top-level JSON keys were excluded, so the allowlist could not reach content nested inside arrays/objects, and non-JSON bodies were scanned as an opaque blob. Excluded field names are now matched at any JSON nesting depth, applied to `application/x-www-form-urlencoded` field names (after decoding), and applied to `multipart/form-data` text-part names (file parts are skipped, never scanned). Bodies that are not structured or not parseable still fall back to a whole-body scan. The allowlist is now effective for OpenAI-style `{"messages":[{"content": …}]}` payloads, HTML form submissions, and small text uploads. Async and sync mirrors updated identically.
+- **Detection settings now take effect in production (behavior change).** The suspicious-pattern engine is configured from `SecurityConfig` at middleware startup, so `detection_threat_score_threshold`, the content preprocessor, and the semantic analyzer now apply to live traffic. Previously the process-global detection singleton was constructed once at import with no config and never reconfigured, so those settings were silently inert outside of tests. As a result, detection now runs in its enhanced mode in production: the default `detection_threat_score_threshold` is unchanged (`1.0`), but the content preprocessor (which normalizes and decodes payloads before matching, catching encoded evasion) and the pure-Python semantic analyzer are now active for every request. No new dependencies are required. Review your detection logs after upgrading and tune `detection_threat_score_threshold`, the `excluded_detection_*` sets, or `detection_scan_body` if the tighter matching changes what is flagged. Async and sync mirrors updated identically.
+
+___
+
+v3.3.0 (2026-07-01)
+-------------------
+
+Detection overhaul — recall 0.42 → 0.86, false positives 0.125 → 0.0, graduated anomaly scoring, and an attack-simulation benchmark harness (v3.3.0)
+--------------------------------------------------------------------------------------------------------------
+
+### Added
+
+- **Graduated anomaly scoring.** New `SecurityConfig.detection_threat_score_threshold` (`float`, default `1.0`, `ge=0.0, le=10.0`): the anomaly score a request must reach before it is flagged as a threat. Detection now accumulates a graduated per-request anomaly score instead of relying on a single binary pattern match. The default threshold of `1.0` reproduces the prior flag-on-any-match behavior, so upgrading is behavior-neutral unless you deliberately raise the threshold (fewer, higher-confidence flags) or lower it (more sensitive). Async and sync mirrors updated identically.
+- **Attack-simulation benchmark harness.** A reproducible benchmark (`make attack-sim`) that scores the detector against a labelled corpus of malicious and benign payloads and reports detection (recall) and false-positive rates against a committed `baseline.json`, plus an AI-coordinated red-team campaign generator with verified attack seeds. Test/CI infrastructure only — no runtime or public API surface.
+
+### Changed
+
+- **Detection recall raised from 0.42 to 0.86.** Repaired the content preprocessor's comment stripping — SQL block/line comments and several encoded payload forms were not normalized before pattern matching — and expanded coverage across the suspicious-pattern set, so a large class of previously-missed injection and traversal attempts is now caught. Async and sync mirrors updated identically.
+- **False-positive rate reduced from 0.125 to 0.0, with recall held.** Tightened patterns to require genuine attack context instead of matching benign traffic: `SELECT … FROM` is now scored by corroboration rather than a bare keyword, and the `ORDER BY`, DDL, ERB-template, and NoSQL-operator patterns require surrounding attack context. The benign corpus was expanded and the baseline re-measured. Async and sync mirrors updated identically.
+
+### Fixed
+
+- **`ipinfo_token` / `ipinfo_db_path` deprecation warning no longer fires on `None`.** The `DeprecationWarning` added in 3.2.0 keyed only on whether the field was passed to the constructor, so a caller forwarding an optional setting — e.g. `SecurityConfig(ipinfo_token=settings.ipinfo_token)` where the setting may be `None` — received a spurious warning even when ipinfo was not in use. The warning now fires only when the deprecated field has a non-`None` value. Async and sync mirrors updated identically.
+
+___
+
+v3.2.0 (2026-06-23)
+-------------------
+
+Cloud-IP region scoping, IP allow-list correctness, bounded body inspection, async/sync mirror parity, agent-error clarity, deprecation signalling, and documented Protocols (v3.2.0)
+--------------------------------------------------------------------------------------------------------------
+
+### Added
+
+- **Observable agent and middleware errors.** New `SecurityConfig.on_error` — one best-effort `on_error(stage, exc, context)` hook (`stage` ∈ `agent_init` / `geoip` / `transport_send` / `encryption`) invoked at failure points and guaranteed never to propagate into the request path (a hook that raises is caught and logged). New `SecurityConfig.agent_strict` (default `False`): adapters raise at initialization instead of silently degrading to agent-off when an enabled agent cannot be constructed.
+- **Region/scope carve-outs for cloud-IP blocking.** `block_cloud_providers` and `@block_clouds` now accept flat-string region selectors: a bare provider (`"GCP"`) blocks the whole provider unchanged, while a carve-out (`"GCP:!us-central1"`) blocks the provider *except* that region. Region scoping is derived from the real `scope` field in GCP's `cloud.json` and the `region` field in AWS's `ip-ranges.json` (no hardcoded region lists); Azure remains provider-level. The `network`→`region` index is built at refresh/index time so per-request `is_cloud_ip` stays O(current) — a single dict lookup on a match. `block_cloud_providers` is now typed `set[str]` (was `set[CloudProvider]`); existing bare-provider configs are unchanged. Region data survives Redis via inline `"network|region"` encoding under versioned keys (`cloud_ip_v2` / `cloud_ranges_v2`) — pre-upgrade cache entries are ignored and refetched within `cloud_ip_refresh_interval`, and older replicas never read the new value shape during a rolling deploy. Async and sync mirrors updated identically.
+
+- **Bounded request-body inspection.** New `SecurityConfig.detection_max_body_inspect_bytes` (default `262144` / 256 KiB; `ge=1024, le=10485760`). `detect_penetration_attempt` now skips reading and scanning the body when the request's `Content-Length` exceeds the cap, so a large body (e.g. ~300MB on a high-traffic proxy) is no longer fully buffered and decoded into memory on the hot path. This bounds the read itself — unlike `detection_max_content_length`, which only truncates inside the regex preprocessor after the body is already in memory. Async and sync mirrors updated identically.
+
+### Fixed
+
+- **IP allow-list is now reliably honored.** An explicit whitelist match overrides the blacklist (dynamic IP bans, evaluated earlier, still win), applied consistently to the global path (`is_ip_allowed`) and the route path (`check_route_ip_access`) — previously the blacklist was evaluated first, so a whitelisted IP that also fell inside a blacklisted CIDR was blocked. Bare-IP matching now uses parsed `ip_address()` equality instead of raw string comparison, so IPv6 compact and expanded forms (`::1` vs `0:0:0:0:0:0:0:1`) match correctly. The global and route-level matchers share one primitive (`utils._ip_in_list`) so they cannot drift, and precedence is documented in the `SecurityConfig.whitelist` / `blacklist` field descriptions. Sync mirror updated identically.
+- **`X-Forwarded-For` client-IP extraction honors `trusted_proxy_depth`.** `_extract_from_forwarded_header` previously returned the leftmost (client-spoofable) `X-Forwarded-For` entry regardless of `trusted_proxy_depth`; it now returns the `trusted_proxy_depth`-th entry from the right, so a client prepending fake entries can no longer defeat the IP allow-list behind trusted proxies.
+- **Restored async/sync mirror parity and enforced it in CI.** The generated `guard_core.sync` mirror had drifted from its async source (`make check-sync` was failing across ~33 files). Repaired the `unasync` generator (bare `asyncio.Lock` annotations, `from guard_core.handlers import …` package imports, the `CloudIpStoreFactory` alias, the decorators logger string, and AsyncMock `await_count`/`await_args` assertions) and excluded the genuinely hand-maintained sync files — the `RateLimitManager` threading lock and its tests — that the regex transform cannot reproduce. A new `check-sync` pre-commit hook now fails CI on any future async/sync drift.
+- **Clear, actionable error when the agent package is missing.** `SecurityConfig.to_agent_config()` now raises `AgentPackageNotInstalledError` (naming the package and install command) instead of returning an ambiguous `None`, so a missing `guard-agent` can no longer be misreported as an "invalid config / check `agent_api_key`" error by adapters.
+- **GeoIP lookups no longer fail silently.** `SecurityEventBus._lookup_country` now logs at warning and fires the `on_error` hook (`stage="geoip"`) instead of swallowing the exception with a bare `except Exception: return None`.
+- **Replaced the deprecated redis `setex` call** with `set(..., ex=ttl)` in both the async and sync Redis handlers, clearing the redis-py `DeprecationWarning`.
+
+### Deprecated
+
+- **`ipinfo_token` and `ipinfo_db_path` now signal deprecation at runtime.** Both fields — long described as deprecated in favour of a custom `geo_ip_handler` — now emit a `DeprecationWarning` when explicitly set, raised once at construction from a `model_validator` keyed on `model_fields_set` (so it never fires on the default value or on internal access). Both keep working unchanged; removal is targeted for a future major release. Migrate by passing any `GeoIPHandler` as `geo_ip_handler`.
+
+### Documentation
+
+- **Documented the integrator-facing Protocols.** Every public `Protocol` extension point — `RedisHandlerProtocol`, `AgentHandlerProtocol`, `CloudIpStoreProtocol`, `GeoIPHandler`, `GuardRequest`, `GuardResponse`/`GuardResponseFactory`, `GuardMiddlewareProtocol` (and their `Sync*` mirrors) — now carries a WHAT/WHEN/HOW class docstring plus a per-method contract docstring covering return-value semantics (None-on-miss, None vs empty set, bool success, TTL units). Docstrings only; no signature or behavior change.
+- **Added an API-surface audit** (`docs/internals/api-surface-audit.md`): an inventory of all `SecurityConfig` fields and the package exports, grouped by domain with a keep/deprecate/group/remove recommendation per item, the `ipinfo_*` deprecation path, and the guard_core ↔ fastapi-guard export single-source-of-truth.
+
+___
+
 v3.1.1 (2026-05-27)
 -------------------
 
@@ -115,6 +187,36 @@ RedisManager singleton hardening (v2.2.1)
 - `__new__` now follows the same true-singleton pattern as `RateLimitManager`: create the instance once, update `config` on every call, return the same instance. Connections are owned by a single live instance and `close()` actually closes them.
 - Mirror fix applied to `guard_core.sync.handlers.redis_handler.RedisManager`.
 - No behavior change for production callers that construct `RedisManager` once at startup. Test suites that previously leaked redis connections across fixtures now run clean under `-W error`.
+
+___
+
+v2.2.0 (2026-04-26)
+-------------------
+
+Phase 1 hardening — CORS, fail-secure, CIDR bans, preprocessor fixes, concurrency safety
+------------------------------------------------------------------------------------------
+
+### Added
+
+- `guard_core.handlers.cors_handler` — framework-agnostic CORS preflight + response-header module consumed by every adapter. Provides `CorsHandler`, `CorsPreflightResponse`, and `is_preflight`.
+- `SecurityConfig.fail_secure` field (default `False`) — when `True`, an unhandled exception in any check blocks the request instead of falling through.
+- `IPBanManager.ban_ip` accepts CIDR networks (`10.0.0.0/24`, `2001:db8::/32`) for both IPv4 and IPv6. Invalid networks raise `ValueError`.
+- Preprocessor encoding decoders: base64 (length-bounded), `\xNN` hex, and `\uNNNN` JS unicode escapes are decoded inside the existing 3-iteration loop.
+- Preprocessor SQL comment stripping: case-aware in-keyword comment removal (`SELE/**/CT` → `SELECT`, `sele/**/ct` → `select`) plus space-replacement for between-token cases (`1/**/OR` → `1 OR`). Line comments (`--`, `#`) replaced with whitespace.
+
+### Fixed
+
+- `<?php` attack-indicator regex now matches the literal PHP open tag (was `<?php` which made `<` optional and matched any string containing `php`). #6
+- Truncated preprocessor output now interleaves attack regions and gaps in source order (was reversing gaps via `insert(0, ...)`). #7
+- `fail_secure` is now actually enforceable; the previous `hasattr` guard always returned `False` because the field was undeclared on `SecurityConfig`.
+- Compiled-regex cache key is deterministic (`{pattern}:{flags}`) instead of using process-salted Python `hash()`, eliminating cross-pattern collisions.
+- Sync `RateLimitManager` serializes in-memory state with `threading.Lock`, avoiding `RuntimeError: deque mutated during iteration` under multi-threaded WSGI servers.
+- `IPBanManager.ban_ip` refuses ban durations longer than the local cache TTL when Redis is unavailable; raises `ValueError` instead of silently truncating to one hour.
+- `DynamicRuleHandler._apply_rules` snapshots config before mutating and rolls back on exception. Concurrent rule pushes serialize under a lock (`asyncio.Lock` async, `threading.Lock` sync).
+
+### Internal
+
+- Test infrastructure: `tests/test_decorators/test_behavior_handler.py` and `tests/test_sync/test_decorators/test_behavior_handler.py` now correctly close their Redis connections in teardown (previously leaked, surfacing as `ResourceWarning` errors under `-W error`).
 
 ___
 
@@ -270,7 +372,7 @@ Enriched telemetry: client-side EventEnricher gated on guard-agent (v1.2.0)
 - **Two-tier telemetry model.** Raw OTel/Logfire signal stays free and unchanged. A new **enriched** tier — gated on `enable_agent=True` + `enable_enrichment=True` — adds project identity, deterministic threat scores, dynamic-rule correlation, and per-IP behavioural correlation to every event and metric the composite fans out. Every exporter (guard-agent, OTel, Logfire) sees the same enriched payload.
 - **`EventEnricher`.** New `guard_core.core.events.enricher.EventEnricher` + `EnrichmentContext` run inside `CompositeAgentHandler.send_event` / `.send_metric` between the mute filter and fan-out. Four independent strategies, each fails soft — a faulty strategy never blocks emission. Async + sync mirror parity maintained via `scripts/unasync.py`.
 - **Eight `guard.*` enrichment keys.** `guard.project_id`, `guard.service.name`, `guard.deployment.environment`, `guard.threat_score`, `guard.rule.id`, `guard.rule.version`, `guard.behavior.correlation_key`, `guard.behavior.recent_event_count`. All nullable, all absent unless the corresponding context exists.
-- **Deterministic threat score.** `ThreatScorer.score_for(event_type)` maps 16 event types to 0-100 scores that match the SaaS's `EVENT_SEVERITY` (`penetration_attempt=90`, `ip_banned=70`, medium events=50, `rate_limited=20`, default=20). No ML, no server-side recomputation.
+- **Deterministic threat score.** `ThreatScorer.score_for(event_type)` maps 16 event types to 0-100 scores defined in guard-core's `_THREAT_SCORE_MAP` (`penetration_attempt=90`, `ip_banned=70`, medium events=50, `rate_limited=20`, default=20). No ML, no server-side recomputation.
 - **Dynamic-rule correlation.** `DynamicRuleManager.match_event(event)` checks the cached rule against the event's IP / country / event-type and returns `(rule_id, version) | None`. The enricher attaches both keys when matched.
 - **Behavioural correlation key.** 16-char SHA-256 prefix of `ip | service | floor(now/300)`, stable within a 5-minute rolling window. Combined with a new `BehaviorTracker.get_recent_event_count(ip, window)` that aggregates in-memory usage counters, dashboards can group correlated attack chains by IP.
 - **OTel + Logfire forward `guard.*` metadata as span attributes.** `OtelHandler.send_event` and `LogfireHandler.send_event` now walk `event.metadata` and attach every `guard.*` key (except `traceparent` / `tracestate`, which are still used for parent-context extraction only).

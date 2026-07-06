@@ -37,7 +37,7 @@ def test_ipban_in_memory_valid() -> None:
 def test_ipban_reset_global_state() -> None:
     IPBanManager._instance = None
     reset_global_state()
-    from guard_core.handlers import ipban_handler
+    from guard_core.sync.handlers import ipban_handler
 
     assert ipban_handler.ip_ban_manager is not None
 
@@ -511,9 +511,9 @@ def test_fetch_gcp_ignores_prefixes_lacking_both_ipv4_and_ipv6() -> None:
             return response
 
     with patch("guard_core.sync.handlers.cloud_handler.requests.Session", _FakeSession):
-        result = fetch_gcp_ip_ranges()
+        networks, _ = fetch_gcp_ip_ranges()
 
-    assert len(result) == 1
+    assert len(networks) == 1
 
 
 def test_ipban_reset_noop_when_no_redis_handler() -> None:

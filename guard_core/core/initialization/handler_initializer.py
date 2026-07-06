@@ -124,7 +124,7 @@ class HandlerInitializer:
             try:
                 await cloud_handler.initialize_redis(
                     self.redis_handler,
-                    cast(set[str], self.config.block_cloud_providers),
+                    self.config.block_cloud_providers,
                     ttl=self.config.cloud_ip_refresh_interval,
                 )
             except Exception as e:
@@ -150,7 +150,14 @@ class HandlerInitializer:
             return cast(CloudIpStoreProtocol, factory(self.redis_handler))
         return cast(CloudIpStoreProtocol, store)
 
+    def _configure_detection(self) -> None:
+        from guard_core.handlers.suspatterns_handler import sus_patterns_handler
+
+        sus_patterns_handler.configure(self.config)
+
     async def initialize_redis_handlers(self) -> None:
+        self._configure_detection()
+
         if not (self.config.enable_redis and self.redis_handler):
             return
 
@@ -169,7 +176,7 @@ class HandlerInitializer:
             if self.config.block_cloud_providers:
                 await cloud_handler.initialize_redis(
                     self.redis_handler,
-                    cast(set[str], self.config.block_cloud_providers),
+                    self.config.block_cloud_providers,
                     ttl=self.config.cloud_ip_refresh_interval,
                 )
             if self.geo_ip_handler is not None:

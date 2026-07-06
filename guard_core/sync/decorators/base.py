@@ -2,7 +2,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, Protocol, cast, runtime_checkable
 
-from guard_core.models import CloudProvider, SecurityConfig
+from guard_core.models import SecurityConfig
 from guard_core.sync.handlers.behavior_handler import BehaviorRule, BehaviorTracker
 from guard_core.sync.protocols.request_protocol import SyncGuardRequest
 
@@ -29,7 +29,7 @@ class RouteConfig:
         self.blocked_user_agents: list[str] = []
         self.required_headers: dict[str, str] = {}
         self.behavior_rules: list[BehaviorRule] = []
-        self.block_cloud_providers: set[CloudProvider] = set()
+        self.block_cloud_providers: set[str] = set()
         self.max_request_size: int | None = None
         self.allowed_content_types: list[str] | None = None
         self.time_restrictions: dict[str, str] | None = None
@@ -42,6 +42,7 @@ class RouteConfig:
         self.excluded_detection_params: set[str] | None = None
         self.excluded_detection_body_fields: set[str] | None = None
         self.enabled_detection_categories: set[str] | None = None
+        self.detection_scan_body: bool | None = None
 
 
 class BaseSecurityMixin:

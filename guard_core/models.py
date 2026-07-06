@@ -1,3 +1,4 @@
+import warnings
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from ipaddress import ip_address, ip_network
@@ -7,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal, get_args
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing_extensions import Self
 
+from guard_core.exceptions import AgentPackageNotInstalledError
 from guard_core.handlers.suspatterns_handler import ALL_DETECTION_CATEGORIES
 from guard_core.protocols.cloud_ip_store_protocol import (
     CloudIpStoreFactory,
@@ -129,11 +131,20 @@ class SecurityConfig(BaseModel):
     )
 
     whitelist: list[str] | None = Field(
-        default=None, description="Allowed IP addresses or CIDR ranges"
+        default=None,
+        description=(
+            "Allowed IP addresses or CIDR ranges. A non-empty whitelist is "
+            "restrictive: only listed IPs pass the global IP check. An explicit "
+            "whitelist match overrides the blacklist; dynamic IP bans still apply."
+        ),
     )
 
     blacklist: list[str] = Field(
-        default_factory=list, description="Blocked IP addresses or CIDR ranges"
+        default_factory=list,
+        description=(
+            "Blocked IP addresses or CIDR ranges. Enforced ahead of country and "
+            "cloud-provider checks, but overridden by an explicit whitelist match."
+        ),
     )
 
     whitelist_countries: frozenset[str] = Field(
@@ -277,8 +288,13 @@ class SecurityConfig(BaseModel):
         default=600, description="Maximum age of CORS preflight results"
     )
 
-    block_cloud_providers: set[CloudProvider] | None = Field(
-        default=None, description="Set of cloud provider names to block"
+    block_cloud_providers: set[str] | None = Field(
+        default=None,
+        description=(
+            "Cloud providers to block. A bare provider ('GCP') blocks the whole "
+            "provider; a region carve-out ('GCP:!us-central1') blocks the provider "
+            "except that region. Region scoping is supported for GCP and AWS."
+        ),
     )
 
     cloud_ip_refresh_interval: int = Field(
@@ -343,16 +359,6 @@ class SecurityConfig(BaseModel):
         default=True, description="Enable/disable penetration attempt detection"
     )
 
-    scan_request_body: bool = Field(
-        default=True,
-        description=(
-            "Scan the request body during penetration detection. Disable to "
-            "skip reading the body entirely (URL, query and headers are still "
-            "scanned). Reading the body buffers the full payload in memory, so "
-            "disabling this is recommended in front of a streaming proxy."
-        ),
-    )
-
     fail_secure: bool = Field(
         default=True,
         description=(
@@ -390,6 +396,25 @@ class SecurityConfig(BaseModel):
 
     agent_api_key: str | None = Field(
         default=None, description="API key for Guard Agent SaaS platform"
+    )
+
+    agent_strict: bool = Field(
+        default=False,
+        description=(
+            "When True, an enabled agent that cannot be initialized (package "
+            "missing or construction failure) raises at middleware init instead "
+            "of degrading to agent-off."
+        ),
+    )
+
+    on_error: Callable[[str, BaseException, dict[str, Any]], None] | None = Field(
+        default=None,
+        description=(
+            "Optional best-effort callback invoked when a middleware/agent step "
+            "fails, receiving (stage, exception, context). stage is one of "
+            "'agent_init', 'geoip', 'transport_send', 'encryption'. A callback "
+            "that raises is caught and logged, never propagated."
+        ),
     )
 
     agent_endpoint: str = Field(
@@ -488,6 +513,19 @@ class SecurityConfig(BaseModel):
         le=100000,
     )
 
+    detection_max_body_inspect_bytes: int = Field(
+        default=262144,
+        description=(
+            "Maximum request body size in bytes read and inspected for penetration "
+            "detection. When the request's Content-Length exceeds this, the body is "
+            "not read or scanned and the request proceeds, bounding memory on the "
+            "detection hot path. Distinct from detection_max_content_length (the regex "
+            "scan window) and max_request_size (the 413 size gate)."
+        ),
+        ge=1024,
+        le=10485760,
+    )
+
     detection_preserve_attack_patterns: bool = Field(
         default=True,
         description="Preserve attack patterns during content truncation",
@@ -526,6 +564,13 @@ class SecurityConfig(BaseModel):
         description="Maximum number of patterns to track for performance",
         ge=100,
         le=5000,
+    )
+
+    detection_threat_score_threshold: float = Field(
+        default=1.0,
+        description="Anomaly score required to flag a request as a threat",
+        ge=0.0,
+        le=10.0,
     )
 
     muted_event_types: set[str] = Field(
@@ -603,7 +648,17 @@ class SecurityConfig(BaseModel):
     excluded_detection_body_fields: set[str] = Field(
         default_factory=set,
         description=(
-            "Top-level JSON body keys to exclude from penetration detection scanning."
+            "JSON body keys to exclude from penetration detection scanning. "
+            "Matched at any nesting depth, and applied to x-www-form-urlencoded "
+            "and multipart text-part field names as well."
+        ),
+    )
+    detection_scan_body: bool = Field(
+        default=True,
+        description=(
+            "Scan the request body during penetration detection. Set False to "
+            "restrict detection to the URL path, query params, and headers; the "
+            "body is then never read or matched, regardless of its shape."
         ),
     )
     enabled_detection_categories: set[str] = Field(
@@ -670,7 +725,7 @@ class SecurityConfig(BaseModel):
     def validate_cloud_providers(cls, v: Any) -> set[str]:
         if v is None:
             return set()
-        return {p for p in v if p in VALID_CLOUD_PROVIDERS}
+        return {sel for sel in v if sel.partition(":!")[0] in VALID_CLOUD_PROVIDERS}
 
     @model_validator(mode="after")
     def validate_geo_ip_handler_exists(self) -> Self:
@@ -708,6 +763,19 @@ class SecurityConfig(BaseModel):
                 "enable_enrichment=False."
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def warn_deprecated_fields(self) -> Self:
+        for name in sorted({"ipinfo_token", "ipinfo_db_path"} & self.model_fields_set):
+            if getattr(self, name) is None:
+                continue
+            warnings.warn(
+                f"{name} is deprecated and will be removed in a future release; "
+                "create a custom geo_ip_handler instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         return self
 
     @field_validator("muted_event_types")
@@ -790,8 +858,11 @@ class SecurityConfig(BaseModel):
                 project_encryption_key=self.agent_project_encryption_key,
                 guard_version=self.agent_guard_version,
             )
-        except ImportError:
-            return None
+        except ImportError as e:
+            raise AgentPackageNotInstalledError(
+                "guard-agent is not installed but enable_agent=True. "
+                "Install it with: pip install guard-agent"
+            ) from e
 
 
 class DynamicRules(BaseModel):

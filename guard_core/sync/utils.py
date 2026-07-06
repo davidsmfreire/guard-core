@@ -1,6 +1,7 @@
 import logging
 import re
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from ipaddress import ip_address, ip_network
 from typing import TYPE_CHECKING, Any, Literal
@@ -16,6 +17,20 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger("guard_core")
+
+
+def invoke_error_hook(
+    hook: Callable[[str, BaseException, dict[str, Any]], None] | None,
+    stage: str,
+    exc: BaseException,
+    context: dict[str, Any],
+) -> None:
+    if hook is None:
+        return
+    try:
+        hook(stage, exc, context)
+    except Exception as hook_error:
+        logger.error(f"on_error hook raised while handling '{stage}': {hook_error}")
 
 
 def _sanitize_for_log(value: str) -> str:
@@ -157,8 +172,7 @@ def _extract_from_forwarded_header(forwarded_for: str, proxy_depth: int) -> str 
     ips = [ip.strip() for ip in forwarded_for.split(",")]
 
     if len(ips) >= proxy_depth:
-        client_ip_index = 0
-        return ips[client_ip_index]
+        return ips[-proxy_depth]
 
     return None
 
@@ -412,26 +426,30 @@ def check_ip_country(
     return is_blocked
 
 
+def _ip_in_list(ip_addr: Any, ip: str, entries: list[str] | None) -> bool:
+    if not entries:
+        return False
+    for entry in entries:
+        if "/" in entry:
+            if ip_addr in ip_network(entry, strict=False):
+                return True
+        else:
+            try:
+                if ip_addr == ip_address(entry):
+                    return True
+            except ValueError:
+                if ip == entry:
+                    return True
+    return False
+
+
 def _check_blacklist(ip_addr: Any, ip: str, config: Any) -> bool:
-    if config.blacklist:
-        for blocked in config.blacklist:
-            if "/" in blocked:
-                if ip_addr in ip_network(blocked, strict=False):
-                    return False
-            elif ip == blocked:
-                return False
-    return True
+    return not _ip_in_list(ip_addr, ip, config.blacklist)
 
 
 def _check_whitelist(ip_addr: Any, ip: str, config: Any) -> bool:
     if config.whitelist:
-        for allowed in config.whitelist:
-            if "/" in allowed:
-                if ip_addr in ip_network(allowed, strict=False):
-                    return True
-            elif ip == allowed:
-                return True
-        return False
+        return _ip_in_list(ip_addr, ip, config.whitelist)
     return True
 
 
@@ -463,10 +481,10 @@ def is_ip_allowed(
     try:
         ip_addr = ip_address(ip)
 
-        if not _check_blacklist(ip_addr, ip, config):
-            return False
-
-        if not _check_whitelist(ip_addr, ip, config):
+        if config.whitelist:
+            if not _check_whitelist(ip_addr, ip, config):
+                return False
+        elif not _check_blacklist(ip_addr, ip, config):
             return False
 
         if not _check_blocked_countries(ip, config, geo_ip_handler):
@@ -647,6 +665,16 @@ def _resolve_enabled_categories(
     return None
 
 
+def _resolve_scan_body(
+    config: "SecurityConfig | None", route_config: "RouteConfig | None"
+) -> bool:
+    if route_config is not None and route_config.detection_scan_body is not None:
+        return route_config.detection_scan_body
+    if config is not None:
+        return config.detection_scan_body
+    return True
+
+
 _DEFAULT_EXCLUDED_HEADERS: frozenset[str] = frozenset(
     {
         "host",
@@ -727,40 +755,35 @@ def _scan_headers(
     return False, "", []
 
 
-def _scan_request_body(
-    raw_body: str,
-    excluded_body_fields: set[str],
+def _scan_body_field(
+    value: str,
+    label: str,
     enabled_categories: set[str] | None,
     client_ip: str,
     correlation_id: str,
     log_level: str | None = "WARNING",
 ) -> tuple[bool, str, list[dict]]:
-    import json
+    detected, trigger, threats = _check_request_component(
+        value,
+        "request_body",
+        label,
+        client_ip,
+        correlation_id,
+        enabled_categories,
+        log_level,
+    )
+    if detected:
+        return True, f"Request body field '{label}': {trigger}", threats
+    return False, "", []
 
-    parsed_body: Any | None = None
-    if excluded_body_fields:
-        try:
-            parsed_body = json.loads(raw_body)
-        except Exception:
-            parsed_body = None
 
-    if isinstance(parsed_body, dict):
-        for key, value in parsed_body.items():
-            if str(key).lower() in excluded_body_fields:
-                continue
-            detected, trigger, threats = _check_request_component(
-                str(value),
-                "request_body",
-                f"request body field '{key}'",
-                client_ip,
-                correlation_id,
-                enabled_categories,
-                log_level,
-            )
-            if detected:
-                return True, f"Request body field '{key}': {trigger}", threats
-        return False, "", []
-
+def _scan_blob_body(
+    raw_body: str,
+    enabled_categories: set[str] | None,
+    client_ip: str,
+    correlation_id: str,
+    log_level: str | None = "WARNING",
+) -> tuple[bool, str, list[dict]]:
     detected, trigger, threats = _check_request_component(
         raw_body,
         "request_body",
@@ -773,6 +796,174 @@ def _scan_request_body(
     if detected:
         return True, f"Request body: {trigger}", threats
     return False, "", []
+
+
+def _scan_json_value(
+    value: Any,
+    key_label: str,
+    excluded_body_fields: set[str],
+    enabled_categories: set[str] | None,
+    client_ip: str,
+    correlation_id: str,
+    log_level: str | None = "WARNING",
+) -> tuple[bool, str, list[dict]]:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if str(key).lower() in excluded_body_fields:
+                continue
+            hit = _scan_json_value(
+                item,
+                str(key),
+                excluded_body_fields,
+                enabled_categories,
+                client_ip,
+                correlation_id,
+                log_level,
+            )
+            if hit[0]:
+                return hit
+        return False, "", []
+    if isinstance(value, list):
+        for item in value:
+            hit = _scan_json_value(
+                item,
+                key_label,
+                excluded_body_fields,
+                enabled_categories,
+                client_ip,
+                correlation_id,
+                log_level,
+            )
+            if hit[0]:
+                return hit
+        return False, "", []
+    return _scan_body_field(
+        str(value), key_label, enabled_categories, client_ip, correlation_id, log_level
+    )
+
+
+def _scan_form_body(
+    raw_body: str,
+    excluded_body_fields: set[str],
+    enabled_categories: set[str] | None,
+    client_ip: str,
+    correlation_id: str,
+    log_level: str | None = "WARNING",
+) -> tuple[bool, str, list[dict]]:
+    from urllib.parse import parse_qsl
+
+    for name, value in parse_qsl(raw_body, keep_blank_values=True):
+        if name.lower() in excluded_body_fields:
+            continue
+        hit = _scan_body_field(
+            value, name, enabled_categories, client_ip, correlation_id, log_level
+        )
+        if hit[0]:
+            return hit
+    return False, "", []
+
+
+def _multipart_text_parts(
+    raw_body: str, content_type: str
+) -> list[tuple[str, str]] | None:
+    from email.parser import Parser
+    from email.policy import compat32
+
+    header = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n"
+    message = Parser(policy=compat32).parsestr(header + raw_body)
+    if not message.is_multipart():
+        return None
+    parts: list[tuple[str, str]] = []
+    for part in message.walk():
+        if part.is_multipart() or part.get_filename():
+            continue
+        name = part.get_param("name", header="content-disposition")
+        payload = part.get_payload(decode=False)
+        if name is None or not isinstance(payload, str):
+            continue
+        parts.append((str(name), payload))
+    return parts
+
+
+def _scan_multipart_body(
+    raw_body: str,
+    content_type: str,
+    excluded_body_fields: set[str],
+    enabled_categories: set[str] | None,
+    client_ip: str,
+    correlation_id: str,
+    log_level: str | None = "WARNING",
+) -> tuple[bool, str, list[dict]]:
+    parts = _multipart_text_parts(raw_body, content_type)
+    if parts is None:
+        return _scan_blob_body(
+            raw_body, enabled_categories, client_ip, correlation_id, log_level
+        )
+    for name, value in parts:
+        if name.lower() in excluded_body_fields:
+            continue
+        hit = _scan_body_field(
+            value, name, enabled_categories, client_ip, correlation_id, log_level
+        )
+        if hit[0]:
+            return hit
+    return False, "", []
+
+
+def _scan_request_body(
+    raw_body: str,
+    content_type: str,
+    excluded_body_fields: set[str],
+    enabled_categories: set[str] | None,
+    client_ip: str,
+    correlation_id: str,
+    log_level: str | None = "WARNING",
+) -> tuple[bool, str, list[dict]]:
+    import json
+
+    if not excluded_body_fields:
+        return _scan_blob_body(
+            raw_body, enabled_categories, client_ip, correlation_id, log_level
+        )
+
+    lowered = content_type.lower()
+    if "application/x-www-form-urlencoded" in lowered:
+        return _scan_form_body(
+            raw_body,
+            excluded_body_fields,
+            enabled_categories,
+            client_ip,
+            correlation_id,
+            log_level,
+        )
+    if "multipart/form-data" in lowered:
+        return _scan_multipart_body(
+            raw_body,
+            content_type,
+            excluded_body_fields,
+            enabled_categories,
+            client_ip,
+            correlation_id,
+            log_level,
+        )
+
+    try:
+        parsed_body = json.loads(raw_body)
+    except Exception:
+        parsed_body = None
+    if isinstance(parsed_body, (dict, list)):
+        return _scan_json_value(
+            parsed_body,
+            "",
+            excluded_body_fields,
+            enabled_categories,
+            client_ip,
+            correlation_id,
+            log_level,
+        )
+    return _scan_blob_body(
+        raw_body, enabled_categories, client_ip, correlation_id, log_level
+    )
 
 
 def _threat_category(threat: dict) -> str | None:
@@ -814,6 +1005,20 @@ def _build_detection_hit(trigger: str, threats: list[dict]) -> DetectionResult:
 
 def _build_detection_miss() -> DetectionResult:
     return DetectionResult(is_threat=False, trigger_info="")
+
+
+def _body_exceeds_inspection_cap(
+    request: SyncGuardRequest, config: "SecurityConfig | None"
+) -> bool:
+    if config is None:
+        return False
+    content_length = request.headers.get("content-length")
+    if content_length is None:
+        return False
+    try:
+        return int(content_length) > config.detection_max_body_inspect_bytes
+    except ValueError:
+        return False
 
 
 def detect_penetration_attempt(
@@ -869,7 +1074,10 @@ def detect_penetration_attempt(
     if detected:
         return _build_detection_hit(trigger, threats)
 
-    if config is not None and not config.scan_request_body:
+    if not _resolve_scan_body(config, route_config):
+        return _build_detection_miss()
+
+    if _body_exceeds_inspection_cap(request, config):
         return _build_detection_miss()
 
     try:
@@ -877,8 +1085,10 @@ def detect_penetration_attempt(
     except Exception:
         return _build_detection_miss()
 
+    content_type = request.headers.get("content-type") or ""
     detected, trigger, threats = _scan_request_body(
         raw_body,
+        content_type,
         excluded_body_fields,
         enabled_categories,
         client_ip,

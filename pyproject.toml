@@ -1,6 +1,6 @@
 [project]
 name = "guard-core"
-version = "3.1.2"
+version = "3.4.0"
 description = "Framework-agnostic security engine for the Guard ecosystem."
 authors = [
     {name = "Renzo Franceschini", email = "rennf93@users.noreply.github.com"}
@@ -117,6 +117,10 @@ addopts = "--cov=guard_core --cov-branch --cov-report=term-missing -m 'not integ
 markers = [
     "asyncio: mark tests as async",
     "integration: marks tests that require Docker + external services (deselect with '-m \"not integration\"')",
+]
+filterwarnings = [
+    "ignore:SelectableGroups dict interface is deprecated:DeprecationWarning",
+    "ignore:ipinfo_.* is deprecated:DeprecationWarning",
 ]
 
 [tool.mypy]

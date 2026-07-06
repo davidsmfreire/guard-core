@@ -26,6 +26,8 @@ _CTX_HTTP_SPLIT = frozenset({"header", "query_param", "request_body", "unknown"}
 _CTX_SENSITIVE_FILE = frozenset({"url_path", "request_body", "unknown"})
 _CTX_CMS_PROBING = frozenset({"url_path", "request_body", "unknown"})
 _CTX_RECON = frozenset({"url_path", "unknown"})
+_CTX_PROTO_POLLUTION = frozenset({"query_param", "request_body", "unknown"})
+_CTX_CODE_INJECTION = frozenset({"query_param", "request_body", "unknown"})
 _CTX_ALL = frozenset({"query_param", "header", "url_path", "request_body", "unknown"})
 
 
@@ -47,6 +49,8 @@ ALL_DETECTION_CATEGORIES: frozenset[str] = frozenset(
         "sensitive_file",
         "cms_probing",
         "recon",
+        "proto_pollution",
+        "code_injection",
     }
 )
 
@@ -67,7 +71,33 @@ CATEGORY_CONTEXT_MAP: dict[str, frozenset[str]] = {
     "sensitive_file": _CTX_SENSITIVE_FILE,
     "cms_probing": _CTX_CMS_PROBING,
     "recon": _CTX_RECON,
+    "proto_pollution": _CTX_PROTO_POLLUTION,
+    "code_injection": _CTX_CODE_INJECTION,
 }
+
+_SELECT_FROM_RE = r"(?i)SELECT\s+[\w\s,\*]+\s+FROM\s+[\w\s\._]+"
+_SELECT_STAR_RE = r"(?i)SELECT\s+\*"
+_WHERE_CLAUSE_RE = r'(?i)\bWHERE\s+[\w."]+\s*(?:=|<|>|<=|>=|LIKE|IN)\b'
+
+DETECTION_CATEGORY_WEIGHTS: dict[str, float] = {
+    category: 1.0 for category in ALL_DETECTION_CATEGORIES
+}
+
+DETECTION_PATTERN_WEIGHT_OVERRIDES: dict[str, float] = {
+    _SELECT_FROM_RE: 0.5,
+    _SELECT_STAR_RE: 0.5,
+    _WHERE_CLAUSE_RE: 0.5,
+}
+
+
+def _resolve_pattern_weight(pattern: str, category: str) -> float:
+    if pattern in DETECTION_PATTERN_WEIGHT_OVERRIDES:
+        return DETECTION_PATTERN_WEIGHT_OVERRIDES[pattern]
+    return DETECTION_CATEGORY_WEIGHTS.get(category, 1.0)
+
+
+def _regex_anomaly(regex_threats: list[dict[str, Any]]) -> float:
+    return float(sum(t.get("weight", 1.0) for t in regex_threats))
 
 
 class SusPatternsManager:
@@ -98,7 +128,9 @@ class SusPatternsManager:
         (r"(?:<object[^>]*>[\s\S]*<\/object\s*>)", _CTX_XSS, "xss"),
         (r"(?:<embed[^>]*>[\s\S]*<\/embed\s*>)", _CTX_XSS, "xss"),
         (r"(?:<applet[^>]*>[\s\S]*<\/applet\s*>)", _CTX_XSS, "xss"),
-        (r"(?i)SELECT\s+[\w\s,\*]+\s+FROM\s+[\w\s\._]+", _CTX_SQLI, "sqli"),
+        (_SELECT_FROM_RE, _CTX_SQLI, "sqli"),
+        (_SELECT_STAR_RE, _CTX_SQLI, "sqli"),
+        (_WHERE_CLAUSE_RE, _CTX_SQLI, "sqli"),
         (r"(?i)UNION\s+(?:ALL\s+)?SELECT", _CTX_SQLI, "sqli"),
         (
             r"(?i)('\s*(?:OR|AND)\s*[\(\s]*'?[\d\w]+\s*(?:=|LIKE|<|>|<=|>=)\s*"
@@ -122,6 +154,19 @@ class SusPatternsManager:
             _CTX_SQLI,
             "sqli",
         ),
+        (r"\w/\*(?!!)[^*]*\*/\w", _CTX_SQLI, "sqli"),
+        (r"(?i)(?:OR|AND)\s+'[\w\d]*'='[\w\d]*'?", _CTX_SQLI, "sqli"),
+        (
+            r"(?i);\s*(?:DROP|TRUNCATE|ALTER)\s+(?:TABLE|DATABASE|SCHEMA)\b",
+            _CTX_SQLI,
+            "sqli",
+        ),
+        (
+            r"(?i);\s*(?:INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b",
+            _CTX_SQLI,
+            "sqli",
+        ),
+        (r"(?i)\bORDER\s+BY\s+\d+\s*(?:--|#|;|\)|,|/\*|$)", _CTX_SQLI, "sqli"),
         (r"(?:\.\.\/|\.\.\\)(?:\.\.\/|\.\.\\)+", _CTX_DIR_TRAVERSAL, "dir_traversal"),
         (
             r"(?:/etc/(?:passwd|shadow|group|hosts|motd|issue|mysql/my.cnf|ssh/"
@@ -163,6 +208,16 @@ class SusPatternsManager:
             "cmd_injection",
         ),
         (
+            r"[;|&]\s*(?:ls|cat|rm|id|whoami|uname|wget|curl|nc|netcat|socat|bash|sh|python|perl)\b",
+            _CTX_CMD_INJECTION,
+            "cmd_injection",
+        ),
+        (
+            r"(?i)\b(?:nc|netcat|ncat)\s+-[a-z]*e\b|/dev/tcp/\d",
+            _CTX_CMD_INJECTION,
+            "cmd_injection",
+        ),
+        (
             r"(?:php|data|zip|rar|file|glob|expect|input|phpinfo|zlib|phar|ssh2|"
             r"rar|ogg|expect)://[^\s]+",
             _CTX_FILE_INCLUSION,
@@ -195,6 +250,17 @@ class SusPatternsManager:
         ),
         (r"(?:\{\s*\$[a-zA-Z]+\s*:\s*(?:\{|\[))", _CTX_NOSQL, "nosql"),
         (
+            r'"\$(?:where|regex|expr|jsonSchema|function|accumulator|type|exists|size)"\s*:',
+            _CTX_NOSQL,
+            "nosql",
+        ),
+        (
+            r'"\$(?:gt|gte|lt|lte|ne|eq|in|nin|all|mod)"'
+            r'\s*:\s*(?:""|null|\{|\[)',
+            _CTX_NOSQL,
+            "nosql",
+        ),
+        (
             r"(?i)filename=[\"'].*?\.(?:php\d*|phar|phtml|exe|jsp|asp|aspx|sh|"
             r"bash|rb|py|pl|cgi|com|bat|cmd|vbs|vbe|js|ws|wsf|msi|hta)[\"\']",
             _CTX_FILE_UPLOAD,
@@ -213,6 +279,17 @@ class SusPatternsManager:
         ),
         (
             r"\{\%\s*[^\%]+(?:system|exec|popen|eval|require|include)\s*\%\}",
+            _CTX_TEMPLATE,
+            "template",
+        ),
+        (
+            r"(?i)<%[=#]?[^%]*(?:system|exec|eval|`|Runtime|IO\.|File\.|Dir\."
+            r"|\d+\s*[-+*/]\s*\d+)[^%]*%>",
+            _CTX_TEMPLATE,
+            "template",
+        ),
+        (
+            r"\$\{[^}]*(?:@[\w.]+@|\b\w+\s*\(|\d+\s*[*/%+\-]\s*\d+)[^}]*\}",
             _CTX_TEMPLATE,
             "template",
         ),
@@ -334,6 +411,16 @@ class SusPatternsManager:
         (r"(?:^|/)autodiscover/", _CTX_RECON, "recon"),
         (r"^/dns-query(?:\?|$)", _CTX_RECON, "recon"),
         (r"(?:^|/)\.git/(?:refs|index|HEAD|objects|logs)(?:/|$)", _CTX_RECON, "recon"),
+        (
+            r"(?:__proto__|constructor)\s*(?:\[\s*[\"']prototype[\"']\s*\]|\.\s*prototype)|[\"']__proto__[\"']\s*:",
+            _CTX_PROTO_POLLUTION,
+            "proto_pollution",
+        ),
+        (
+            r"System\.Diagnostics\.Process\.Start\s*\(|System\.Reflection\.|Assembly\.Load\s*\(",
+            _CTX_CODE_INJECTION,
+            "code_injection",
+        ),
     ]
 
     patterns: list[str] = [p[0] for p in _pattern_definitions]
@@ -348,6 +435,7 @@ class SusPatternsManager:
     _semantic_analyzer: SemanticAnalyzer | None
     _performance_monitor: PerformanceMonitor | None
     _semantic_threshold: float
+    _threat_score_threshold: float
 
     def __new__(
         cls: type["SusPatternsManager"], config: Any = None
@@ -366,30 +454,46 @@ class SusPatternsManager:
             cls._config = config
 
             if config and hasattr(config, "detection_compiler_timeout"):
-                cls._instance._compiler = PatternCompiler(
-                    default_timeout=config.detection_compiler_timeout,
-                    max_cache_size=config.detection_max_tracked_patterns,
-                )
-                cls._instance._preprocessor = ContentPreprocessor(
-                    max_content_length=config.detection_max_content_length,
-                    preserve_attack_patterns=config.detection_preserve_attack_patterns,
-                )
-                cls._instance._semantic_analyzer = SemanticAnalyzer()
-                cls._instance._performance_monitor = PerformanceMonitor(
-                    anomaly_threshold=config.detection_anomaly_threshold,
-                    slow_pattern_threshold=config.detection_slow_pattern_threshold,
-                    history_size=config.detection_monitor_history_size,
-                    max_tracked_patterns=config.detection_max_tracked_patterns,
-                )
-                cls._instance._semantic_threshold = config.detection_semantic_threshold
+                cls._apply_enhanced_config(cls._instance, config)
             else:
-                cls._instance._compiler = None
-                cls._instance._preprocessor = None
-                cls._instance._semantic_analyzer = None
-                cls._instance._performance_monitor = None
-                cls._instance._semantic_threshold = 0.7
+                cls._apply_legacy_config(cls._instance)
 
         return cls._instance
+
+    @staticmethod
+    def _apply_enhanced_config(instance: "SusPatternsManager", config: Any) -> None:
+        instance._compiler = PatternCompiler(
+            default_timeout=config.detection_compiler_timeout,
+            max_cache_size=config.detection_max_tracked_patterns,
+        )
+        instance._preprocessor = ContentPreprocessor(
+            max_content_length=config.detection_max_content_length,
+            preserve_attack_patterns=config.detection_preserve_attack_patterns,
+        )
+        instance._semantic_analyzer = SemanticAnalyzer()
+        instance._performance_monitor = PerformanceMonitor(
+            anomaly_threshold=config.detection_anomaly_threshold,
+            slow_pattern_threshold=config.detection_slow_pattern_threshold,
+            history_size=config.detection_monitor_history_size,
+            max_tracked_patterns=config.detection_max_tracked_patterns,
+        )
+        instance._semantic_threshold = config.detection_semantic_threshold
+        instance._threat_score_threshold = config.detection_threat_score_threshold
+
+    @staticmethod
+    def _apply_legacy_config(instance: "SusPatternsManager") -> None:
+        instance._compiler = None
+        instance._preprocessor = None
+        instance._semantic_analyzer = None
+        instance._performance_monitor = None
+        instance._semantic_threshold = 0.7
+        instance._threat_score_threshold = 1.0
+
+    def configure(self, config: Any) -> None:
+        if config is None or not hasattr(config, "detection_compiler_timeout"):
+            return
+        SusPatternsManager._config = config
+        self._apply_enhanced_config(self, config)
 
     async def initialize_redis(self, redis_handler: Any) -> None:
         self.redis_handler = redis_handler
@@ -477,6 +581,7 @@ class SusPatternsManager:
                     "position": match.start(),
                     "execution_time": time.time() - pattern_start,
                     "category": category,
+                    "weight": _resolve_pattern_weight(pattern.pattern, category),
                 }, timeout_occurred
         else:
             match, timeout_occurred = await self._check_pattern_with_timeout(
@@ -490,6 +595,7 @@ class SusPatternsManager:
                     "position": match.start(),
                     "execution_time": time.time() - pattern_start,
                     "category": category,
+                    "weight": _resolve_pattern_weight(pattern.pattern, category),
                 }, timeout_occurred
 
         return None, timeout_occurred
@@ -631,12 +737,12 @@ class SusPatternsManager:
         if not (regex_threats or semantic_threats):
             return 0.0
 
-        regex_score = 1.0 if regex_threats else 0.0
+        anomaly = _regex_anomaly(regex_threats)
         semantic_scores = [
             t.get("probability", t.get("threat_score", 0.0)) for t in semantic_threats
         ]
         semantic_max = max(semantic_scores) if semantic_scores else 0.0
-        return max(regex_score, semantic_max)
+        return min(max(anomaly, semantic_max), 1.0)
 
     async def detect(
         self,
@@ -664,7 +770,10 @@ class SusPatternsManager:
         )
 
         threats = regex_threats + semantic_threats
-        is_threat = len(threats) > 0
+        is_threat = (
+            _regex_anomaly(regex_threats) >= self._threat_score_threshold
+            or len(semantic_threats) > 0
+        )
 
         threat_score = await self._calculate_threat_score(
             regex_threats, semantic_threats

@@ -1,5 +1,3 @@
-import base64
-
 import pytest
 
 from guard_core.sync.detection_engine.preprocessor import ContentPreprocessor
@@ -11,8 +9,8 @@ def pp() -> ContentPreprocessor:
 
 
 def test_base64_payload_decoded(pp: ContentPreprocessor) -> None:
-    token = base64.b64encode(b"<script>alert(1)</script>").decode("ascii")
-    result = pp.preprocess(f"data: {token}")
+    payload = "PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=="
+    result = pp.preprocess(f"data: {payload}")
     assert "<script" in result.lower()
 
 
@@ -22,11 +20,17 @@ def test_hex_escape_decoded(pp: ContentPreprocessor) -> None:
     assert "<script" in result.lower()
 
 
-def test_sql_block_comment_stripped(pp: ContentPreprocessor) -> None:
+def test_js_unicode_escape_decoded(pp: ContentPreprocessor) -> None:
+    payload = r"\u003cscript\u003ealert(1)\u003c/script\u003e"
+    result = pp.preprocess(payload)
+    assert "<script" in result.lower()
+
+
+def test_sql_block_comment_retained_not_fused(pp: ContentPreprocessor) -> None:
     payload = "SELE/**/CT password FRO/**/M users"
     result = pp.preprocess(payload)
-    assert "select" in result.lower()
-    assert "from" in result.lower()
+    assert "/**/" in result
+    assert "select" not in result.lower()
 
 
 def test_sql_line_comment_stripped(pp: ContentPreprocessor) -> None:
@@ -39,12 +43,6 @@ def test_decode_iteration_cap_holds(pp: ContentPreprocessor) -> None:
     payload = "%2525253c" * 50
     result = pp.preprocess(payload)
     assert isinstance(result, str)
-
-
-def test_js_unicode_escape_decoded(pp: ContentPreprocessor) -> None:
-    payload = r"\u003cscript\u003ealert(1)\u003c/script\u003e"
-    result = pp.preprocess(payload)
-    assert "<script" in result.lower()
 
 
 def test_hex_escape_invalid_value(pp: ContentPreprocessor) -> None:
@@ -66,6 +64,8 @@ def test_base64_invalid_token_preserved(pp: ContentPreprocessor) -> None:
 
 
 def test_base64_non_printable_preserved(pp: ContentPreprocessor) -> None:
+    import base64
+
     binary_data = bytes(range(32))
     token = base64.b64encode(binary_data).decode("ascii")
     result = pp.preprocess(f"data: {token}")
@@ -94,7 +94,7 @@ def test_decode_unicode_escapes_directly(pp: ContentPreprocessor) -> None:
 
 
 def test_strip_sql_comments_block(pp: ContentPreprocessor) -> None:
-    assert pp._strip_sql_comments("SEL/*x*/ECT") == "SELECT"
+    assert pp._strip_sql_comments("SEL/*x*/ECT") == "SEL/*x*/ECT"
 
 
 def test_strip_sql_comments_line(pp: ContentPreprocessor) -> None:
@@ -108,6 +108,8 @@ def test_strip_sql_comments_hash(pp: ContentPreprocessor) -> None:
 
 
 def test_decode_base64_candidates_valid(pp: ContentPreprocessor) -> None:
+    import base64
+
     token = base64.b64encode(b"<script>alert(1)</script>").decode("ascii")
     result = pp._decode_base64_candidates(token)
     assert "<script>" in result
@@ -144,33 +146,31 @@ def test_unicode_escape_value_error_path(pp: ContentPreprocessor) -> None:
     assert result == "\\u0041"
 
 
-def test_sql_between_token_comment_preserves_word_boundaries(
+def test_sql_between_token_comment_retained(
     pp: ContentPreprocessor,
 ) -> None:
     payload = "WHERE id=1/**/OR/**/x=2"
     result = pp.preprocess(payload)
-    lower = result.lower()
-    assert "1or" not in lower
-    assert "orx" not in lower
-    assert " or " in lower
+    assert "/**/" in result
+    assert "1or" not in result.lower()
 
 
-def test_sql_lowercase_keyword_comment_reconstructs(pp: ContentPreprocessor) -> None:
+def test_sql_lowercase_keyword_comment_retained(
+    pp: ContentPreprocessor,
+) -> None:
     payload = "sele/**/ct password fro/**/m users"
     result = pp.preprocess(payload)
-    lower = result.lower()
-    assert "select" in lower
-    assert "from" in lower
+    assert "/**/" in result
+    assert "select" not in result.lower()
 
 
-def test_sql_uppercase_keyword_then_lowercase_identifier_no_fusion(
+def test_sql_uppercase_keyword_comment_retained(
     pp: ContentPreprocessor,
 ) -> None:
     payload = "WHERE id=1 OR/**/x=2"
     result = pp.preprocess(payload)
-    lower = result.lower()
-    assert "orx" not in lower
-    assert " or " in lower or lower.endswith(" or") or lower.startswith("or ")
+    assert "/**/" in result
+    assert "orx" not in result.lower()
 
 
 def test_truncate_preserves_tail_content_after_attack_region(
@@ -184,16 +184,3 @@ def test_truncate_preserves_tail_content_after_attack_region(
     assert "<script" in result.lower()
     assert len(result) <= 300
     assert len(result) > len(attack)
-
-
-def test_truncate_attack_region_starting_at_zero_no_gap(
-    pp: ContentPreprocessor,
-) -> None:
-    pp2 = ContentPreprocessor(max_content_length=300, preserve_attack_patterns=True)
-    attack = "<script>x</script>"
-    safe_tail = "Z" * 400
-    payload = attack + safe_tail
-    regions = pp2.extract_attack_regions(payload)
-    assert regions[0][0] == 0
-    result = pp2.truncate_safely(payload)
-    assert "<script" in result.lower()

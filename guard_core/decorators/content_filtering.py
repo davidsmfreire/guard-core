@@ -64,6 +64,7 @@ class ContentFilteringMixin(BaseSecurityMixin):
         params: set[str] | None = None,
         body_fields: set[str] | None = None,
         categories: set[str] | None = None,
+        scan_body: bool | None = None,
     ) -> Callable[[Callable[..., Any]], DecoratedFunction]:
         def decorator(func: Callable[..., Any]) -> DecoratedFunction:
             route_config = self._ensure_route_config(func)
@@ -75,6 +76,8 @@ class ContentFilteringMixin(BaseSecurityMixin):
                 route_config.excluded_detection_body_fields = set(body_fields)
             if categories is not None:
                 route_config.enabled_detection_categories = set(categories)
+            if scan_body is not None:
+                route_config.detection_scan_body = scan_body
             return self._apply_route_config(func)
 
         return decorator

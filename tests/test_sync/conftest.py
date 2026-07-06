@@ -7,16 +7,46 @@ import pytest
 from pytest import TempPathFactory
 
 from guard_core.models import SecurityConfig
+from guard_core.sync.handlers import suspatterns_handler as _suspatterns_module
 from guard_core.sync.handlers.cloud_handler import cloud_handler
 from guard_core.sync.handlers.ipban_handler import IPBanManager
 from guard_core.sync.handlers.ipinfo_handler import IPInfoManager
 from guard_core.sync.handlers.ratelimit_handler import rate_limit_handler
 from guard_core.sync.handlers.redis_handler import RedisManager
-from guard_core.sync.handlers.suspatterns_handler import sus_patterns_handler
+from guard_core.sync.handlers.suspatterns_handler import (
+    SusPatternsManager,
+    sus_patterns_handler,
+)
 
 IPINFO_TOKEN = os.getenv("IPINFO_TOKEN") or "test_token"
 REDIS_URL = os.getenv("REDIS_URL") or "redis://localhost:6379"
 REDIS_PREFIX = os.getenv("REDIS_PREFIX") or "test:guard_core:"
+
+_DETECTION_SINGLETON_FIELDS = (
+    "_compiler",
+    "_preprocessor",
+    "_semantic_analyzer",
+    "_performance_monitor",
+    "_semantic_threshold",
+    "_threat_score_threshold",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_detection_singleton() -> Any:
+    handler = _suspatterns_module.sus_patterns_handler
+    saved_fields = {
+        name: getattr(handler, name) for name in _DETECTION_SINGLETON_FIELDS
+    }
+    saved_instance = SusPatternsManager._instance
+    saved_config = SusPatternsManager._config
+    saved_global = _suspatterns_module.sus_patterns_handler
+    yield
+    for name, value in saved_fields.items():
+        setattr(handler, name, value)
+    SusPatternsManager._instance = saved_instance
+    SusPatternsManager._config = saved_config
+    _suspatterns_module.sus_patterns_handler = saved_global
 
 
 class MockState:
@@ -136,8 +166,6 @@ class MockGuardResponseFactory:
 def reset_state() -> Generator[None, None]:
     IPBanManager._instance = None
 
-    original_patterns = sus_patterns_handler.patterns.copy()
-
     cloud_instance = cloud_handler._instance
     if cloud_instance:
         from guard_core.sync.handlers.cloud_ip_stores import InMemoryCloudIpStore
@@ -154,7 +182,12 @@ def reset_state() -> Generator[None, None]:
         IPInfoManager._instance = None
 
     yield
-    sus_patterns_handler.patterns = original_patterns.copy()
+    spm = type(sus_patterns_handler)
+    spm._instance = sus_patterns_handler
+    spm._config = None
+    sus_patterns_handler.patterns = [p[0] for p in spm._pattern_definitions]
+    sus_patterns_handler.custom_patterns = set()
+    sus_patterns_handler.compiled_custom_patterns = set()
 
     IPBanManager._instance = None
 

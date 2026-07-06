@@ -45,7 +45,7 @@ def _mock_session(*responses: MagicMock) -> MagicMock:
 
 
 @pytest.fixture
-def mock_aiohttp_session() -> Generator[MagicMock, None]:
+def mock_aiohttp_session() -> Generator[MagicMock, None, None]:
     with patch("guard_core.sync.handlers.cloud_handler.requests.Session") as mock_cls:
         mock_sess = MagicMock()
         mock_sess.__enter__ = MagicMock(return_value=mock_sess)
@@ -58,33 +58,42 @@ def test_fetch_aws_ip_ranges(mock_aiohttp_session: MagicMock) -> None:
     mock_resp = _mock_aiohttp_response(
         json_data={
             "prefixes": [
-                {"ip_prefix": "192.168.0.0/24", "service": "AMAZON"},
+                {
+                    "ip_prefix": "192.168.0.0/24",
+                    "service": "AMAZON",
+                    "region": "us-east-1",
+                },
                 {"ip_prefix": "10.0.0.0/8", "service": "EC2"},
+                {"ip_prefix": "172.16.0.0/12", "service": "AMAZON"},
             ]
         }
     )
     mock_aiohttp_session.get = MagicMock(return_value=mock_resp)
 
-    result = fetch_aws_ip_ranges()
-    assert ipaddress.IPv4Network("192.168.0.0/24") in result
-    assert ipaddress.IPv4Network("10.0.0.0/8") not in result
+    networks, regions = fetch_aws_ip_ranges()
+    assert ipaddress.IPv4Network("192.168.0.0/24") in networks
+    assert ipaddress.IPv4Network("10.0.0.0/8") not in networks
+    assert regions[str(ipaddress.IPv4Network("192.168.0.0/24"))] == "us-east-1"
+    assert ipaddress.IPv4Network("172.16.0.0/12") in networks
+    assert str(ipaddress.IPv4Network("172.16.0.0/12")) not in regions
 
 
 def test_fetch_gcp_ip_ranges(mock_aiohttp_session: MagicMock) -> None:
     mock_resp = _mock_aiohttp_response(
         json_data={
             "prefixes": [
-                {"ipv4Prefix": "172.16.0.0/12"},
-                {"ipv6Prefix": "2001:db8::/32"},
+                {"ipv4Prefix": "172.16.0.0/12", "scope": "us-central1"},
+                {"ipv6Prefix": "2001:db8::/32", "scope": "europe-west1"},
             ]
         }
     )
     mock_aiohttp_session.get = MagicMock(return_value=mock_resp)
 
-    result = fetch_gcp_ip_ranges()
-    assert ipaddress.IPv4Network("172.16.0.0/12") in result
-    assert ipaddress.IPv6Network("2001:db8::/32") in result
-    assert len(result) == 2
+    networks, regions = fetch_gcp_ip_ranges()
+    assert ipaddress.IPv4Network("172.16.0.0/12") in networks
+    assert ipaddress.IPv6Network("2001:db8::/32") in networks
+    assert len(networks) == 2
+    assert regions[str(ipaddress.IPv4Network("172.16.0.0/12"))] == "us-central1"
 
 
 def test_fetch_azure_ip_ranges(mock_aiohttp_session: MagicMock) -> None:
@@ -247,16 +256,16 @@ def test_cloud_ip_ranges_invalid_ip() -> None:
 
 def test_fetch_aws_ip_ranges_error(mock_aiohttp_session: MagicMock) -> None:
     mock_aiohttp_session.get = MagicMock(side_effect=Exception("API failure"))
-    result = fetch_aws_ip_ranges()
-    assert result == set()
+    networks, _ = fetch_aws_ip_ranges()
+    assert networks == set()
 
 
 def test_fetch_gcp_ip_ranges_error(mock_aiohttp_session: MagicMock) -> None:
     mock_resp = _mock_aiohttp_response()
     mock_resp.json = MagicMock(side_effect=Exception("Invalid JSON"))
     mock_aiohttp_session.get = MagicMock(return_value=mock_resp)
-    result = fetch_gcp_ip_ranges()
-    assert result == set()
+    networks, _ = fetch_gcp_ip_ranges()
+    assert networks == set()
 
 
 def test_cloud_manager_refresh_handling() -> None:
@@ -359,13 +368,13 @@ def test_cloud_ip_redis_caching(security_config_redis: SecurityConfig) -> None:
         assert cloud_handler.is_cloud_ip("192.168.0.1", {"AWS"})
         import json as _json
 
-        cached_raw = redis_handler.get_key("cloud_ip", "AWS")
+        cached_raw = redis_handler.get_key("cloud_ip_v2", "AWS")
         assert _json.loads(cached_raw) == ["192.168.0.0/24"]
 
         mock_aws.return_value = {ipaddress.IPv4Network("192.168.1.0/24")}
         cloud_handler.refresh_async()
 
-        redis_handler.delete("cloud_ip", "AWS")
+        redis_handler.delete("cloud_ip_v2", "AWS")
         cloud_handler.refresh_async()
 
         mock_aws.side_effect = Exception("API Error")
@@ -387,7 +396,7 @@ def test_cloud_ip_redis_cache_hit(
     redis_handler = RedisManager(security_config_redis)
     redis_handler.initialize()
 
-    redis_handler.set_key("cloud_ip", "AWS", _json.dumps(["192.168.0.0/24"]))
+    redis_handler.set_key("cloud_ip_v2", "AWS", _json.dumps(["192.168.0.0/24"]))
 
     cloud_handler.initialize_redis(redis_handler)
 
@@ -457,8 +466,8 @@ def test_cloud_ip_redis_error_handling(
         redis_handler = RedisManager(security_config_redis)
         redis_handler.initialize()
 
-        redis_handler.delete("cloud_ranges", "AWS")
-        redis_handler.delete("cloud_ip", "AWS")
+        redis_handler.delete("cloud_ranges_v2", "AWS")
+        redis_handler.delete("cloud_ip_v2", "AWS")
 
         mock_aws.side_effect = Exception("API Error")
         cloud_handler.initialize_redis(redis_handler)
@@ -819,11 +828,6 @@ def test_get_cloud_provider_details_returns_match_or_none() -> None:
     assert cloud_handler.get_cloud_provider_details("not-an-ip", {"AWS"}) is None
 
 
-def test_get_cloud_provider_details_skips_unknown_provider() -> None:
-    cloud_handler.ip_ranges = {"AWS": {ipaddress.IPv4Network("192.168.0.0/24")}}
-    assert cloud_handler.get_cloud_provider_details("8.8.8.8", {"Bogus"}) is None
-
-
 def test_send_cloud_detection_event_no_op_without_agent() -> None:
     cloud_handler.agent_handler = None
     cloud_handler.send_cloud_detection_event("1.2.3.4", "AWS", "192.168.0.0/24")
@@ -831,6 +835,7 @@ def test_send_cloud_detection_event_no_op_without_agent() -> None:
 
 def test_send_cloud_detection_event_dispatches_when_agent_present() -> None:
     agent = MagicMock()
+    agent.send_event = MagicMock()
     cloud_handler.agent_handler = agent
     try:
         cloud_handler.send_cloud_detection_event("1.2.3.4", "AWS", "192.168.0.0/24")
@@ -854,16 +859,6 @@ def test_send_cloud_event_logs_when_agent_dispatch_raises() -> None:
         cloud_handler.agent_handler = None
 
 
-def test_send_cloud_event_returns_when_agent_handler_missing() -> None:
-    cloud_handler.agent_handler = None
-    cloud_handler._send_cloud_event(
-        event_type="cloud_blocked",
-        ip_address="1.2.3.4",
-        action_taken="blocked",
-        reason="test",
-    )
-
-
 def test_fetch_gcp_ip_ranges_skips_unknown_prefix_keys(
     mock_aiohttp_session: MagicMock,
 ) -> None:
@@ -876,9 +871,9 @@ def test_fetch_gcp_ip_ranges_skips_unknown_prefix_keys(
         }
     )
     mock_aiohttp_session.get = MagicMock(return_value=mock_resp)
-    result = fetch_gcp_ip_ranges()
-    assert ipaddress.IPv4Network("172.16.0.0/12") in result
-    assert len(result) == 1
+    networks, _ = fetch_gcp_ip_ranges()
+    assert ipaddress.IPv4Network("172.16.0.0/12") in networks
+    assert len(networks) == 1
 
 
 def test_initialize_redis_replaces_in_memory_store(
@@ -931,6 +926,13 @@ def test_initialize_redis_replaces_in_memory_store(
     cloud_handler.set_store(InMemoryCloudIpStore())
 
 
+def test_initialize_agent_records_handler() -> None:
+    agent = MagicMock()
+    cloud_handler.initialize_agent(agent)
+    assert cloud_handler.agent_handler is agent
+    cloud_handler.agent_handler = None
+
+
 def test_initialize_redis_keeps_existing_redis_store(
     security_config_redis: SecurityConfig,
 ) -> None:
@@ -981,21 +983,6 @@ def test_initialize_redis_keeps_existing_redis_store(
     cloud_handler.set_store(InMemoryCloudIpStore())
 
 
-def test_initialize_agent_records_handler() -> None:
-    agent = MagicMock()
-    cloud_handler.initialize_agent(agent)
-    assert cloud_handler.agent_handler is agent
-    cloud_handler.agent_handler = None
-
-
-def test_cloud_manager_returns_existing_singleton() -> None:
-    from guard_core.sync.handlers.cloud_handler import CloudManager
-
-    first = CloudManager()
-    second = CloudManager()
-    assert first is second
-
-
 def test_refresh_via_redis_handler_handles_empty_fetch(
     security_config_redis: SecurityConfig,
 ) -> None:
@@ -1017,6 +1004,29 @@ def test_refresh_via_redis_handler_handles_empty_fetch(
     from guard_core.sync.handlers.cloud_ip_stores import InMemoryCloudIpStore
 
     cloud_handler.set_store(InMemoryCloudIpStore())
+
+
+def test_get_cloud_provider_details_skips_unknown_provider() -> None:
+    cloud_handler.ip_ranges = {"AWS": {ipaddress.IPv4Network("192.168.0.0/24")}}
+    assert cloud_handler.get_cloud_provider_details("8.8.8.8", {"Bogus"}) is None
+
+
+def test_send_cloud_event_returns_when_agent_handler_missing() -> None:
+    cloud_handler.agent_handler = None
+    cloud_handler._send_cloud_event(
+        event_type="cloud_blocked",
+        ip_address="1.2.3.4",
+        action_taken="blocked",
+        reason="test",
+    )
+
+
+def test_cloud_manager_returns_existing_singleton() -> None:
+    from guard_core.sync.handlers.cloud_handler import CloudManager
+
+    first = CloudManager()
+    second = CloudManager()
+    assert first is second
 
 
 def test_refresh_via_redis_handler_keeps_existing_provider_state(

@@ -322,11 +322,13 @@ async def test_get_performance_stats_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_performance_stats_with_monitor() -> None:
-    manager = sus_patterns_handler
+async def test_get_performance_stats_with_monitor(
+    sus_patterns_manager_with_detection: SusPatternsManager,
+) -> None:
+    manager = sus_patterns_manager_with_detection
 
     stats = await manager.get_performance_stats()
-    assert stats is None
+    assert stats is not None
 
 
 @pytest.mark.asyncio

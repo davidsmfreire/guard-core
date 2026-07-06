@@ -2,9 +2,7 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Any, cast
 
-from guard_core.sync.protocols.cloud_ip_store_protocol import (
-    SyncCloudIpStoreProtocol,
-)
+from guard_core.sync.protocols.cloud_ip_store_protocol import SyncCloudIpStoreProtocol
 
 if TYPE_CHECKING:
     from guard_core.models import SecurityConfig
@@ -129,7 +127,7 @@ class HandlerInitializer:
             try:
                 cloud_handler.initialize_redis(
                     self.redis_handler,
-                    cast(set[str], self.config.block_cloud_providers),
+                    self.config.block_cloud_providers,
                     ttl=self.config.cloud_ip_refresh_interval,
                 )
             except Exception as e:
@@ -155,7 +153,14 @@ class HandlerInitializer:
             return cast(SyncCloudIpStoreProtocol, factory(self.redis_handler))
         return cast(SyncCloudIpStoreProtocol, store)
 
+    def _configure_detection(self) -> None:
+        from guard_core.sync.handlers.suspatterns_handler import sus_patterns_handler
+
+        sus_patterns_handler.configure(self.config)
+
     def initialize_redis_handlers(self) -> None:
+        self._configure_detection()
+
         if not (self.config.enable_redis and self.redis_handler):
             return
 
@@ -177,7 +182,7 @@ class HandlerInitializer:
             if self.config.block_cloud_providers:
                 cloud_handler.initialize_redis(
                     self.redis_handler,
-                    cast(set[str], self.config.block_cloud_providers),
+                    self.config.block_cloud_providers,
                     ttl=self.config.cloud_ip_refresh_interval,
                 )
             if self.geo_ip_handler is not None:

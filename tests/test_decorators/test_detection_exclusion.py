@@ -23,6 +23,23 @@ def test_route_config_detection_exclusion_defaults_to_none() -> None:
     assert rc.excluded_detection_params is None
     assert rc.excluded_detection_body_fields is None
     assert rc.enabled_detection_categories is None
+    assert rc.detection_scan_body is None
+
+
+def test_detection_exclusion_sets_scan_body() -> None:
+    d = _FakeDecorator(SecurityConfig())
+    decorated = _decorate(d.detection_exclusion(scan_body=False))
+    rc = d.get_route_config(d._get_route_id(decorated))
+    assert rc is not None
+    assert rc.detection_scan_body is False
+
+
+def test_detection_exclusion_scan_body_unset_leaves_none() -> None:
+    d = _FakeDecorator(SecurityConfig())
+    decorated = _decorate(d.detection_exclusion(headers={"authorization"}))
+    rc = d.get_route_config(d._get_route_id(decorated))
+    assert rc is not None
+    assert rc.detection_scan_body is None
 
 
 def test_route_config_detection_exclusion_accepts_sets() -> None:
