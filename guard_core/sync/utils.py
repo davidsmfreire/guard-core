@@ -839,10 +839,6 @@ def detect_penetration_attempt(
     if detected:
         return _build_detection_hit(trigger, threats)
 
-    # Reading the body forces the whole payload into memory (and, under a
-    # BaseHTTPMiddleware proxy, defeats request streaming). Skip it entirely
-    # when body scanning is disabled - the URL, query and headers are already
-    # scanned above.
     if config is not None and not config.scan_request_body:
         return _build_detection_miss()
 
