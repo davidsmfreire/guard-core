@@ -13,6 +13,8 @@ from guard_core.sync.protocols.agent_protocol import SyncAgentHandlerProtocol
 from guard_core.sync.protocols.cloud_ip_store_protocol import SyncCloudIpStoreProtocol
 from guard_core.sync.protocols.redis_protocol import SyncRedisHandlerProtocol
 
+logger = logging.getLogger("guard_core.sync.handlers.cloud")
+
 
 def fetch_aws_ip_ranges() -> set[ipaddress.IPv4Network | ipaddress.IPv6Network]:
     try:
@@ -29,7 +31,7 @@ def fetch_aws_ip_ranges() -> set[ipaddress.IPv4Network | ipaddress.IPv6Network]:
             if ip_range["service"] == "AMAZON"
         }
     except Exception as e:
-        logging.error(f"Failed to fetch AWS IP ranges: {str(e)}")
+        logger.error(f"Failed to fetch AWS IP ranges: {str(e)}")
         return set()
 
 
@@ -50,7 +52,7 @@ def fetch_gcp_ip_ranges() -> set[ipaddress.IPv4Network | ipaddress.IPv6Network]:
                 networks.add(ipaddress.ip_network(ip_range["ipv6Prefix"]))
         return networks
     except Exception as e:
-        logging.error(f"Failed to fetch GCP IP ranges: {str(e)}")
+        logger.error(f"Failed to fetch GCP IP ranges: {str(e)}")
         return set()
 
 
@@ -89,7 +91,7 @@ def fetch_azure_ip_ranges() -> set[ipaddress.IPv4Network | ipaddress.IPv6Network
             for ip_range in data["values"][0]["properties"]["addressPrefixes"]
         }
     except Exception as e:
-        logging.error(f"Failed to fetch Azure IP ranges: {str(e)}")
+        logger.error(f"Failed to fetch Azure IP ranges: {str(e)}")
         return set()
 
 
@@ -119,7 +121,7 @@ def fetch_digitalocean_ip_ranges() -> set[
                 continue
         return networks
     except Exception as e:
-        logging.error(f"Failed to fetch DigitalOcean IP ranges: {str(e)}")
+        logger.error(f"Failed to fetch DigitalOcean IP ranges: {str(e)}")
         return set()
 
 
@@ -147,7 +149,7 @@ def fetch_linode_ip_ranges() -> set[ipaddress.IPv4Network | ipaddress.IPv6Networ
                 continue
         return networks
     except Exception as e:
-        logging.error(f"Failed to fetch Linode IP ranges: {str(e)}")
+        logger.error(f"Failed to fetch Linode IP ranges: {str(e)}")
         return set()
 
 
@@ -172,7 +174,7 @@ def fetch_vultr_ip_ranges() -> set[ipaddress.IPv4Network | ipaddress.IPv6Network
                 continue
         return networks
     except Exception as e:
-        logging.error(f"Failed to fetch Vultr IP ranges: {str(e)}")
+        logger.error(f"Failed to fetch Vultr IP ranges: {str(e)}")
         return set()
 
 

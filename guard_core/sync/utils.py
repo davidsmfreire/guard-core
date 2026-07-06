@@ -15,6 +15,9 @@ if TYPE_CHECKING:
     from guard_core.sync.decorators.base import RouteConfig
 
 
+logger = logging.getLogger("guard_core")
+
+
 def _sanitize_for_log(value: str) -> str:
     if not value:
         return value
@@ -192,9 +195,9 @@ def extract_client_ip(
         if forwarded_for:
             safe_forwarded_for = _sanitize_for_log(forwarded_for)
             log_fn = (
-                logging.debug
+                logger.debug
                 if _is_private_or_loopback(connecting_ip)
-                else logging.warning
+                else logger.warning
             )
             log_fn(
                 f"Potential IP spoof attempt: X-Forwarded-For header "  # nosemgrep
@@ -220,7 +223,7 @@ def extract_client_ip(
         if client_ip:
             return client_ip
     except (ValueError, IndexError) as e:
-        logging.warning(f"Error processing client IP: {str(e)}")
+        logger.warning(f"Error processing client IP: {str(e)}")
 
     return connecting_ip
 
@@ -342,28 +345,35 @@ def _has_country_rules(config: Any) -> bool:
     return bool(config.blocked_countries or config.whitelist_countries)
 
 
-def _log_country_check_result(ip: str, country: str | None, result_type: str) -> None:
+def _log_country_check_result(
+    ip: str, country: str | None, result_type: str, config: Any = None
+) -> None:
     if result_type == "no_rules":
-        logging.debug(
+        logger.debug(
             f"No countries blocked or whitelisted {ip} - "
             "No countries blocked or whitelisted"
         )
     elif result_type == "no_geolocation":
-        logging.debug(f"IP not geolocated {ip} - IP geolocation failed")
-    elif result_type == "whitelisted":
-        logging.info(
-            f"IP from whitelisted country {ip} - {country} - "
-            "IP from whitelisted country"
-        )
+        logger.debug(f"IP not geolocated {ip} - IP geolocation failed")
     elif result_type == "blocked":
-        logging.warning(
+        logger.warning(
             f"IP from blocked country {ip} - {country} - IP from blocked country"
         )
-    elif result_type == "not_affected":
-        logging.info(
-            f"IP not from blocked or whitelisted country {ip} - {country} - "
-            "IP not from blocked or whitelisted country"
-        )
+    elif result_type in ("whitelisted", "not_affected"):
+        level = getattr(config, "log_country_check_level", "INFO")
+        if level is None:
+            return
+        log = getattr(logger, level.lower())
+        if result_type == "whitelisted":
+            log(
+                f"IP from whitelisted country {ip} - {country} - "
+                "IP from whitelisted country"
+            )
+        else:
+            log(
+                f"IP not from blocked or whitelisted country {ip} - {country} - "
+                "IP not from blocked or whitelisted country"
+            )
 
 
 def _evaluate_country_access(country: str, config: Any) -> tuple[bool, str]:
@@ -397,7 +407,7 @@ def check_ip_country(
         return False
 
     is_blocked, result_type = _evaluate_country_access(country, config)
-    _log_country_check_result(ip, country, result_type)
+    _log_country_check_result(ip, country, result_type, config)
 
     return is_blocked
 
@@ -469,7 +479,7 @@ def is_ip_allowed(
     except ValueError:
         return False
     except Exception as e:
-        logging.error(f"Error checking IP {ip}: {str(e)}")
+        logger.error(f"Error checking IP {ip}: {str(e)}")
         return True
 
 
@@ -572,7 +582,7 @@ def _check_value_enhanced(
         return True, "Threat detected", threats
 
     except Exception as e:
-        logging.error(f"Enhanced detection failed: {e}, falling back to basic check")
+        logger.error(f"Enhanced detection failed: {e}, falling back to basic check")
         detected, trigger = _fallback_pattern_check(value)
         return detected, trigger, []
 
@@ -584,11 +594,12 @@ def _check_request_component(
     client_ip: str,
     correlation_id: str,
     enabled_categories: set[str] | None = None,
+    log_level: str | None = "WARNING",
 ) -> tuple[bool, str, list[dict]]:
     detected, trigger, threats = _check_value_enhanced(
         value, context, client_ip, correlation_id, enabled_categories
     )
-    if detected:
+    if detected and log_level is not None:
         message = "Potential attack detected from"
         details = (
             f"{client_ip}: {value[:100]}..."
@@ -596,7 +607,7 @@ def _check_request_component(
             else f"{client_ip}: {value}"
         )
         reason_message = f"Suspicious pattern in {component_name}"
-        logging.warning(f"{message} {details} - {reason_message}")
+        _log_at_level(logger, log_level, f"{message} {details} - {reason_message}")
     return detected, trigger, threats
 
 
@@ -672,6 +683,7 @@ def _scan_query_params(
     enabled_categories: set[str] | None,
     client_ip: str,
     correlation_id: str,
+    log_level: str | None = "WARNING",
 ) -> tuple[bool, str, list[dict]]:
     for key, value in request.query_params.items():
         if key.lower() in excluded_params:
@@ -683,6 +695,7 @@ def _scan_query_params(
             client_ip,
             correlation_id,
             enabled_categories,
+            log_level,
         )
         if detected:
             return True, f"Query param '{key}': {trigger}", threats
@@ -695,6 +708,7 @@ def _scan_headers(
     enabled_categories: set[str] | None,
     client_ip: str,
     correlation_id: str,
+    log_level: str | None = "WARNING",
 ) -> tuple[bool, str, list[dict]]:
     for key, value in request.headers.items():
         if key.lower() in excluded_headers:
@@ -706,6 +720,7 @@ def _scan_headers(
             client_ip,
             correlation_id,
             enabled_categories,
+            log_level,
         )
         if detected:
             return True, f"Header '{key}': {trigger}", threats
@@ -718,6 +733,7 @@ def _scan_request_body(
     enabled_categories: set[str] | None,
     client_ip: str,
     correlation_id: str,
+    log_level: str | None = "WARNING",
 ) -> tuple[bool, str, list[dict]]:
     import json
 
@@ -739,6 +755,7 @@ def _scan_request_body(
                 client_ip,
                 correlation_id,
                 enabled_categories,
+                log_level,
             )
             if detected:
                 return True, f"Request body field '{key}': {trigger}", threats
@@ -751,6 +768,7 @@ def _scan_request_body(
         client_ip,
         correlation_id,
         enabled_categories,
+        log_level,
     )
     if detected:
         return True, f"Request body: {trigger}", threats
@@ -815,9 +833,15 @@ def detect_penetration_attempt(
     excluded_body_fields = _resolve_excluded_body_fields(config, route_config)
     enabled_categories = _resolve_enabled_categories(config, route_config)
     excluded_headers = _resolve_excluded_headers(config, route_config)
+    log_level = config.log_suspicious_level if config is not None else "WARNING"
 
     detected, trigger, threats = _scan_query_params(
-        request, excluded_params, enabled_categories, client_ip, correlation_id
+        request,
+        excluded_params,
+        enabled_categories,
+        client_ip,
+        correlation_id,
+        log_level,
     )
     if detected:
         return _build_detection_hit(trigger, threats)
@@ -829,12 +853,18 @@ def detect_penetration_attempt(
         client_ip,
         correlation_id,
         enabled_categories,
+        log_level,
     )
     if detected:
         return _build_detection_hit(f"URL path: {trigger}", threats)
 
     detected, trigger, threats = _scan_headers(
-        request, excluded_headers, enabled_categories, client_ip, correlation_id
+        request,
+        excluded_headers,
+        enabled_categories,
+        client_ip,
+        correlation_id,
+        log_level,
     )
     if detected:
         return _build_detection_hit(trigger, threats)
@@ -845,7 +875,12 @@ def detect_penetration_attempt(
         return _build_detection_miss()
 
     detected, trigger, threats = _scan_request_body(
-        raw_body, excluded_body_fields, enabled_categories, client_ip, correlation_id
+        raw_body,
+        excluded_body_fields,
+        enabled_categories,
+        client_ip,
+        correlation_id,
+        log_level,
     )
     if detected:
         return _build_detection_hit(trigger, threats)

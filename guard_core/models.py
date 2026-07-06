@@ -187,6 +187,18 @@ class SecurityConfig(BaseModel):
         Literal["INFO", "DEBUG", "WARNING", "ERROR", "CRITICAL"] | None
     ) = Field(default=None, description="Log level for requests")
 
+    log_country_check_level: (
+        Literal["INFO", "DEBUG", "WARNING", "ERROR", "CRITICAL"] | None
+    ) = Field(
+        default="INFO",
+        description=(
+            "Log level for per-request country verdicts that are not blocks "
+            "(whitelisted / not-affected). Set to None to silence them. "
+            "Blocked-country hits always log at WARNING; no-rules and "
+            "no-geolocation cases always log at DEBUG."
+        ),
+    )
+
     log_format: Literal["text", "json"] = Field(
         default="text",
         description="Log output format: 'text' or 'json' for structured JSON",
