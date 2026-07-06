@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
+from guard_core.exceptions import GuardRedisError
 from guard_core.protocols.response_protocol import GuardResponse
 from guard_core.sync.core.checks.base import SecurityCheck
 from guard_core.sync.core.checks.pipeline import SecurityCheckPipeline
@@ -36,6 +37,19 @@ class FailingCheck(SecurityCheck):
 
     def check(self, request: SyncGuardRequest) -> GuardResponse | None:
         raise ValueError("Check error")
+
+
+class RedisFailingCheck(SecurityCheck):
+    def __init__(self, middleware: Mock, name: str = "redis_failing_check") -> None:
+        super().__init__(middleware)
+        self._name = name
+
+    @property
+    def check_name(self) -> str:
+        return self._name
+
+    def check(self, request: SyncGuardRequest) -> GuardResponse | None:
+        raise GuardRedisError(503, "Redis connection failed")
 
 
 @pytest.fixture
@@ -140,6 +154,34 @@ def test_execute_with_exception_fail_secure_false_falls_through(
     result = pipeline.execute(mock_request)
 
     assert result is None
+
+
+def test_execute_fails_open_on_redis_error_despite_fail_secure(
+    mock_middleware: Mock, mock_request: Mock
+) -> None:
+    mock_middleware.config.fail_secure = True
+    mock_middleware.config.redis_fail_open = True
+    failing_check = RedisFailingCheck(mock_middleware)
+
+    pipeline = SecurityCheckPipeline([failing_check])
+    result = pipeline.execute(mock_request)
+
+    assert result is None
+    mock_middleware.create_error_response.assert_not_called()
+
+
+def test_execute_blocks_on_redis_error_when_fail_open_disabled(
+    mock_middleware: Mock, mock_request: Mock
+) -> None:
+    mock_middleware.config.fail_secure = True
+    mock_middleware.config.redis_fail_open = False
+    failing_check = RedisFailingCheck(mock_middleware)
+
+    pipeline = SecurityCheckPipeline([failing_check])
+    result = pipeline.execute(mock_request)
+
+    assert result is not None
+    assert result.status_code == 500
 
 
 def test_add_check(mock_middleware: Mock) -> None:
@@ -306,3 +348,27 @@ def test_pipeline_skips_fail_secure_log_when_check_is_muted(
     assert not any(
         "Blocking request due to check error" in r.getMessage() for r in caplog.records
     )
+
+
+def test_pipeline_skips_redis_fail_open_log_when_check_is_muted(
+    mock_middleware: Mock, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    mock_middleware.config.fail_secure = True
+    mock_middleware.config.redis_fail_open = True
+    failing = RedisFailingCheck(mock_middleware, name="muted_redis")
+
+    pipeline = SecurityCheckPipeline(
+        [failing],
+        muted_check_logs={"muted_redis"},
+    )
+    request = Mock()
+    request.url_path = "/x"
+    request.method = "GET"
+    request.state = type("S", (), {})()
+
+    with caplog.at_level(logging.WARNING):
+        result = pipeline.execute(request)
+    assert result is None
+    assert not any("Skipping check" in r.getMessage() for r in caplog.records)
