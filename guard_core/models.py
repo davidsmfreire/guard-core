@@ -363,6 +363,15 @@ class SecurityConfig(BaseModel):
         ),
     )
 
+    redis_fail_open: bool = Field(
+        default=True,
+        description=(
+            "On GuardRedisError (Redis unreachable), skip the failing check "
+            "and let the request through instead of honoring fail_secure. "
+            "Set False to treat Redis outages as fail_secure does."
+        ),
+    )
+
     ipinfo_token: str | None = Field(
         default=None,
         description="IPInfo API token for IP geolocation. Deprecated. "
