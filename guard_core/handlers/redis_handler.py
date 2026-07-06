@@ -6,7 +6,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from redis.asyncio import Redis
-from redis.exceptions import ConnectionError
+from redis.asyncio.retry import Retry
+from redis.backoff import ExponentialBackoff
+from redis.exceptions import ConnectionError, TimeoutError
 
 from guard_core.exceptions import GuardRedisError
 from guard_core.models import SecurityConfig
@@ -54,6 +56,26 @@ class RedisManager:
         except Exception as e:
             self.logger.error(f"Failed to send Redis event to agent: {e}")
 
+    def _connection_kwargs(self) -> dict[str, Any]:
+        """Connection tuning passed to ``Redis.from_url``.
+
+        Without bounded timeouts a partitioned Redis blocks every request that
+        touches it indefinitely, so these default to non-None. Any value already
+        encoded in ``redis_url`` query params still wins (redis-py applies URL
+        params last), so this only sets a floor.
+        """
+        kwargs: dict[str, Any] = {
+            "socket_connect_timeout": self.config.redis_socket_connect_timeout,
+            "socket_timeout": self.config.redis_socket_timeout,
+            "health_check_interval": self.config.redis_health_check_interval,
+        }
+        if self.config.redis_max_connections is not None:
+            kwargs["max_connections"] = self.config.redis_max_connections
+        if self.config.redis_retries > 0:
+            kwargs["retry"] = Retry(ExponentialBackoff(), self.config.redis_retries)
+            kwargs["retry_on_error"] = [ConnectionError, TimeoutError]
+        return kwargs
+
     async def initialize(self) -> None:
         if not self.config.enable_redis:
             self._redis = None
@@ -65,7 +87,9 @@ class RedisManager:
             try:
                 if self.config.redis_url is not None:
                     self._redis = Redis.from_url(
-                        self.config.redis_url, decode_responses=True
+                        self.config.redis_url,
+                        decode_responses=True,
+                        **self._connection_kwargs(),
                     )
                     if self._redis is not None:
                         await self._redis.ping()
