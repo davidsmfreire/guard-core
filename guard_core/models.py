@@ -343,6 +343,16 @@ class SecurityConfig(BaseModel):
         default=True, description="Enable/disable penetration attempt detection"
     )
 
+    scan_request_body: bool = Field(
+        default=True,
+        description=(
+            "Scan the request body during penetration detection. Disable to "
+            "skip reading the body entirely (URL, query and headers are still "
+            "scanned). Reading the body buffers the full payload in memory, so "
+            "disabling this is recommended in front of a streaming proxy."
+        ),
+    )
+
     fail_secure: bool = Field(
         default=True,
         description=(

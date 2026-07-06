@@ -869,6 +869,9 @@ def detect_penetration_attempt(
     if detected:
         return _build_detection_hit(trigger, threats)
 
+    if config is not None and not config.scan_request_body:
+        return _build_detection_miss()
+
     try:
         raw_body = (request.body()).decode()
     except Exception:
