@@ -40,3 +40,26 @@ __all__ = [
     "GuardResponse",
     "GuardResponseFactory",
 ]
+
+
+def _mute_pydantic_plugin_instrumentation() -> None:
+    """Opt guard-agent's hot-path telemetry models out of pydantic plugin
+    instrumentation (e.g. logfire.instrument_pydantic()).
+
+    SecurityEvent/SecurityMetric are validated per request and EventBatch
+    re-validates every buffered event on each flush, so an instrumented host
+    app would otherwise emit a span per security event — hundreds of
+    thousands a day under real traffic. plugin_settings is only read while
+    building a model's validator, hence the forced rebuild.
+    """
+    try:
+        from guard_agent.models import EventBatch, SecurityEvent, SecurityMetric
+    except ImportError:  # agent extra not installed
+        return
+    for model in (SecurityEvent, SecurityMetric, EventBatch):
+        plugin_settings = model.model_config.setdefault("plugin_settings", {})
+        plugin_settings["logfire"] = {"record": "off"}
+        model.model_rebuild(force=True)
+
+
+_mute_pydantic_plugin_instrumentation()
