@@ -370,11 +370,14 @@ class SecurityConfig(BaseModel):
     )
 
     redis_fail_open: bool = Field(
-        default=True,
+        default=False,
         description=(
             "On GuardRedisError (Redis unreachable), skip the failing check "
             "and let the request through instead of honoring fail_secure. "
-            "Set False to treat Redis outages as fail_secure does."
+            "Defaults to False so fail_secure is the single source of truth "
+            "for every check failure, including Redis outages. Set True to "
+            "opt into treating Redis outages as an availability concern "
+            "distinct from other check failures."
         ),
     )
 

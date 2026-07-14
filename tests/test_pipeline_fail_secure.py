@@ -53,9 +53,29 @@ async def test_pipeline_falls_through_when_not_fail_secure() -> None:
     assert result is None
 
 
-def test_default_security_config_is_redis_fail_open() -> None:
+def test_default_security_config_is_not_redis_fail_open() -> None:
     config = SecurityConfig()
-    assert config.redis_fail_open is True
+    assert config.redis_fail_open is False
+
+
+@pytest.mark.asyncio
+async def test_pipeline_blocks_on_redis_error_with_default_config() -> None:
+    """fail_secure is the single source of truth by default: a Redis error
+    blocks the request unless redis_fail_open is explicitly opted into."""
+    config = SecurityConfig(fail_secure=True)
+
+    failing_check = MagicMock()
+    failing_check.check_name = "ip_security"
+    failing_check.config = config
+    failing_check.check = AsyncMock(
+        side_effect=GuardRedisError(503, "Redis connection failed")
+    )
+    failing_check.create_error_response = AsyncMock(return_value="BLOCKED")
+
+    pipeline = SecurityCheckPipeline([failing_check])
+    result = await pipeline.execute(MagicMock())
+
+    assert result == "BLOCKED"
 
 
 @pytest.mark.asyncio
