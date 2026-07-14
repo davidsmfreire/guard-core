@@ -1,7 +1,9 @@
 import ipaddress
 import logging
+import threading
+import time
 from collections.abc import Generator
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -24,7 +26,7 @@ def reset_cloud_handler() -> Generator[None, None]:
     cloud_handler._refresh_in_flight = False
     yield
     task = cloud_handler._refresh_task
-    if task is not None and not task.done():
+    if task is not None and task.is_alive():
         task.join(timeout=1)
     cloud_handler._refresh_task = None
     cloud_handler._refresh_in_flight = False
@@ -43,3 +45,166 @@ def _make_check(interval: int = 3600, last_refresh: int = 0) -> CloudIpRefreshCh
 
 def _aws_ok() -> set:
     return {_AWS_NET}
+
+
+class _InstantThread:
+    """A threading.Thread stand-in that runs its target synchronously inside
+    start(), simulating a background thread that finishes before the caller's
+    next line executes. Used to prove schedule_refresh() sets
+    `_refresh_in_flight = True` BEFORE starting the thread, not after — if the
+    ordering regresses, the target's `finally: _refresh_in_flight = False`
+    runs inside start() and gets clobbered back to True by the caller,
+    permanently wedging future refreshes off."""
+
+    def __init__(self, target: object, daemon: bool = True) -> None:
+        self._target = target
+
+    def start(self) -> None:
+        self._target()  # type: ignore[operator]
+
+    def join(self, timeout: float | None = None) -> None:
+        return None
+
+    def is_alive(self) -> bool:
+        return False
+
+
+def test_schedule_refresh_runs_fetch_in_background() -> None:
+    with patch(
+        "guard_core.sync.handlers.cloud_handler.fetch_aws_ip_ranges", new=_aws_ok
+    ):
+        started = cloud_handler.schedule_refresh({"AWS"}, ttl=3600)
+        assert started is True
+        task = cloud_handler._refresh_task
+        assert task is not None
+        task.join(timeout=1)
+
+    assert cloud_handler.is_cloud_ip("192.168.0.1", {"AWS"})
+
+
+def test_schedule_refresh_is_single_flight() -> None:
+    started_evt = threading.Event()
+    release_evt = threading.Event()
+
+    def slow_aws() -> set:
+        started_evt.set()
+        release_evt.wait(timeout=2)
+        return {_AWS_NET}
+
+    with patch(
+        "guard_core.sync.handlers.cloud_handler.fetch_aws_ip_ranges", new=slow_aws
+    ):
+        assert cloud_handler.schedule_refresh({"AWS"}) is True
+        assert started_evt.wait(timeout=2)
+        first_task = cloud_handler._refresh_task
+
+        # Second call while the first is in flight must NOT start a new task.
+        assert cloud_handler.schedule_refresh({"AWS"}) is False
+        assert cloud_handler._refresh_task is first_task
+
+        release_evt.set()
+        first_task.join(timeout=2)  # type: ignore[union-attr]
+
+
+def test_check_returns_immediately_when_fetch_hangs() -> None:
+    hang = threading.Event()
+
+    def hanging_aws() -> set:
+        hang.wait(timeout=2)
+        return set()
+
+    check = _make_check(last_refresh=0)
+    with patch(
+        "guard_core.sync.handlers.cloud_handler.fetch_aws_ip_ranges", new=hanging_aws
+    ):
+        start = time.monotonic()
+        result = check.check(MagicMock())
+        elapsed = time.monotonic() - start
+
+    hang.set()
+    task = cloud_handler._refresh_task
+    if task is not None:
+        task.join(timeout=2)
+
+    assert result is None
+    assert elapsed < 1.0  # the request path must not block on the fetch
+    assert check.middleware.last_cloud_ip_refresh > 0  # debounce bumped up front
+    assert cloud_handler._refresh_task is not None  # refresh scheduled in background
+
+
+def test_check_skips_refresh_within_interval() -> None:
+    check = _make_check(last_refresh=int(time.time()))
+    with patch.object(cloud_handler, "schedule_refresh") as spy:
+        result = check.check(MagicMock())
+
+    assert result is None
+    spy.assert_not_called()
+
+
+def test_check_noop_without_block_cloud_providers() -> None:
+    middleware = MagicMock()
+    middleware.config = SecurityConfig(block_cloud_providers=None)
+    middleware.logger = logging.getLogger("test.cloud_ip_refresh")
+    middleware.last_cloud_ip_refresh = 0
+    check = CloudIpRefreshCheck(middleware)
+
+    with patch.object(cloud_handler, "schedule_refresh") as spy:
+        result = check.check(MagicMock())
+
+    assert result is None
+    spy.assert_not_called()
+    assert middleware.last_cloud_ip_refresh == 0
+
+
+def test_schedule_refresh_logs_and_recovers_on_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def boom() -> set:
+        raise RuntimeError("azure down")
+
+    with patch("guard_core.sync.handlers.cloud_handler.fetch_aws_ip_ranges", new=boom):
+        with caplog.at_level(logging.ERROR, logger="guard_core.sync.handlers.cloud"):
+            assert cloud_handler.schedule_refresh({"AWS"}) is True
+            task = cloud_handler._refresh_task
+            assert task is not None
+            task.join(timeout=2)
+
+        assert "Failed to refresh AWS IP ranges" in caplog.text
+        # Failure is swallowed (never propagates to the request) and the slot frees.
+        assert cloud_handler._refresh_in_flight is False
+        assert cloud_handler.schedule_refresh({"AWS"}) is True
+        second = cloud_handler._refresh_task
+        if second is not None:
+            second.join(timeout=2)
+
+
+def test_schedule_refresh_sets_in_flight_before_starting_thread() -> None:
+    """Regression test: a fast-finishing background thread must not be able to
+    clobber `_refresh_in_flight` back to True after the target's own
+    `finally: _refresh_in_flight = False` has already run. This requires
+    `_refresh_in_flight = True` to be set BEFORE the thread starts, not after."""
+    with patch(
+        "guard_core.sync.handlers.cloud_handler.fetch_aws_ip_ranges", new=_aws_ok
+    ):
+        with patch(
+            "guard_core.sync.handlers.cloud_handler.threading.Thread",
+            new=_InstantThread,
+        ):
+            started = cloud_handler.schedule_refresh({"AWS"}, ttl=3600)
+
+    assert started is True
+    # The instant thread already ran to completion (and its `finally` already
+    # set the flag False) by the time start() returns. If schedule_refresh set
+    # the flag AFTER starting the thread, this assignment would stomp the
+    # completed thread's False back to True, wedging future refreshes off.
+    assert cloud_handler._refresh_in_flight is False
+    # A subsequent call must be able to start a new refresh -- proving the
+    # slot was correctly freed rather than permanently wedged.
+    with patch(
+        "guard_core.sync.handlers.cloud_handler.fetch_aws_ip_ranges", new=_aws_ok
+    ):
+        with patch(
+            "guard_core.sync.handlers.cloud_handler.threading.Thread",
+            new=_InstantThread,
+        ):
+            assert cloud_handler.schedule_refresh({"AWS"}, ttl=3600) is True

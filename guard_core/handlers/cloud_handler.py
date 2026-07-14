@@ -320,12 +320,13 @@ class CloudManager:
         async with self._refresh_lock:
             if self._refresh_in_flight:
                 return False
+            self._refresh_in_flight = True
             try:
                 self._refresh_task = asyncio.create_task(_run_refresh())
             except RuntimeError:
                 self.logger.exception("Could not schedule cloud IP refresh")
+                self._refresh_in_flight = False
                 return False
-            self._refresh_in_flight = True
             return True
 
     def _log_range_changes(
