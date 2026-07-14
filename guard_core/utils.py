@@ -1021,6 +1021,10 @@ def _body_exceeds_inspection_cap(
         return False
 
 
+def _resolve_log_level(config: "SecurityConfig | None") -> str | None:
+    return config.log_suspicious_level if config is not None else "WARNING"
+
+
 async def detect_penetration_attempt(
     request: GuardRequest,
     config: "SecurityConfig | None" = None,
@@ -1028,17 +1032,14 @@ async def detect_penetration_attempt(
 ) -> DetectionResult:
     import uuid
 
-    client_ip = "unknown"
-    if request.client_host:
-        client_ip = request.client_host
-
+    client_ip = request.client_host or "unknown"
     correlation_id = str(uuid.uuid4())
 
     excluded_params = _resolve_excluded_params(config, route_config)
     excluded_body_fields = _resolve_excluded_body_fields(config, route_config)
     enabled_categories = _resolve_enabled_categories(config, route_config)
     excluded_headers = _resolve_excluded_headers(config, route_config)
-    log_level = config.log_suspicious_level if config is not None else "WARNING"
+    log_level = _resolve_log_level(config)
 
     detected, trigger, threats = await _scan_query_params(
         request,
