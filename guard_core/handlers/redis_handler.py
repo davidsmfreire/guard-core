@@ -216,6 +216,11 @@ class RedisManager:
     async def incr(
         self, namespace: str, key: str, ttl: int | None = None
     ) -> int | None:
+        # NOTE: when redis_retries > 0, the client-level retry can re-send this
+        # non-idempotent INCR if a reply is lost after the server already
+        # committed it, over-counting by one. For the counter use here that
+        # fails closed (mildly over-restrictive, self-heals next window). A
+        # caller needing exactly-once semantics should not build on incr().
         if not self.config.enable_redis:
             return None
 
