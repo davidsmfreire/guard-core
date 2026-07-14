@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 from guard_core.decorators import RouteConfig, SecurityDecorator
 from guard_core.handlers.behavior_handler import BehaviorRule, BehaviorTracker
 from guard_core.handlers.cloud_handler import CloudManager, cloud_handler
@@ -57,7 +59,10 @@ def _mute_pydantic_plugin_instrumentation() -> None:
     except ImportError:  # agent extra not installed
         return
     for model in (SecurityEvent, SecurityMetric, EventBatch):
-        plugin_settings = model.model_config.setdefault("plugin_settings", {})
+        plugin_settings = cast(
+            "dict[str, Any]",
+            model.model_config.setdefault("plugin_settings", {}),
+        )
         plugin_settings["logfire"] = {"record": "off"}
         model.model_rebuild(force=True)
 
