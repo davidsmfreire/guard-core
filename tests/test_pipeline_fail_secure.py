@@ -98,6 +98,32 @@ async def test_pipeline_fails_open_on_redis_error_despite_fail_secure() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pipeline_fails_open_on_redis_error_without_logging_when_muted() -> None:
+    """Fail-open still happens for a muted check, but the skip is not logged."""
+    config = SecurityConfig(fail_secure=True, redis_fail_open=True)
+
+    failing_check = MagicMock()
+    failing_check.check_name = "ip_security"
+    failing_check.config = config
+    failing_check.check = AsyncMock(
+        side_effect=GuardRedisError(503, "Redis connection failed")
+    )
+    failing_check.create_error_response = AsyncMock(return_value="BLOCKED")
+
+    pipeline = SecurityCheckPipeline(
+        [failing_check], muted_check_logs={"ip_security"}
+    )
+    logger = MagicMock()
+    pipeline.logger = logger
+
+    result = await pipeline.execute(MagicMock())
+
+    assert result is None
+    failing_check.create_error_response.assert_not_called()
+    logger.warning.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_pipeline_blocks_on_redis_error_when_fail_open_disabled() -> None:
     config = SecurityConfig(fail_secure=True, redis_fail_open=False)
 

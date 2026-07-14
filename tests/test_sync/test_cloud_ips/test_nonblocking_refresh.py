@@ -208,3 +208,46 @@ def test_schedule_refresh_sets_in_flight_before_starting_thread() -> None:
             new=_InstantThread,
         ):
             assert cloud_handler.schedule_refresh({"AWS"}, ttl=3600) is True
+
+
+def test_run_refresh_logs_when_refresh_async_itself_raises(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with patch.object(cloud_handler, "refresh_async", side_effect=RuntimeError("boom")):
+        with caplog.at_level(logging.ERROR, logger="guard_core.sync.handlers.cloud"):
+            assert cloud_handler.schedule_refresh({"AWS"}) is True
+            task = cloud_handler._refresh_task
+            assert task is not None
+            task.join(timeout=2)
+
+    assert "Background cloud IP refresh failed" in caplog.text
+    # The background thread swallowed the error and freed the slot.
+    assert cloud_handler._refresh_in_flight is False
+
+
+def test_schedule_refresh_recovers_when_thread_start_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _NoStartThread:
+        def __init__(self, target: object, daemon: bool = True) -> None:
+            pass
+
+        def start(self) -> None:
+            raise RuntimeError("can't start thread")
+
+        def is_alive(self) -> bool:
+            return False
+
+        def join(self, timeout: float | None = None) -> None:
+            return None
+
+    with patch(
+        "guard_core.sync.handlers.cloud_handler.threading.Thread", new=_NoStartThread
+    ):
+        with caplog.at_level(logging.ERROR, logger="guard_core.sync.handlers.cloud"):
+            started = cloud_handler.schedule_refresh({"AWS"})
+
+    assert started is False
+    assert "Could not schedule cloud IP refresh" in caplog.text
+    # The in-flight flag must be reset so a later call can retry.
+    assert cloud_handler._refresh_in_flight is False

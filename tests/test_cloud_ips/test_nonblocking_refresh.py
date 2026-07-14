@@ -146,3 +146,41 @@ async def test_schedule_refresh_logs_and_recovers_on_failure(  # async-only
             second.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await second
+
+
+async def test_run_refresh_logs_when_refresh_async_itself_raises(  # async-only
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    with patch.object(
+        cloud_handler, "refresh_async", new=AsyncMock(side_effect=RuntimeError("boom"))
+    ):
+        with caplog.at_level(logging.ERROR, logger="guard_core.handlers.cloud"):
+            assert await cloud_handler.schedule_refresh({"AWS"}) is True
+            task = cloud_handler._refresh_task
+            assert task is not None
+            await task
+
+    assert "Background cloud IP refresh failed" in caplog.text
+    # The background task swallowed the error and freed the slot.
+    assert cloud_handler._refresh_in_flight is False
+
+
+async def test_schedule_refresh_recovers_when_task_creation_fails(  # async-only
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def _reject(coro: object) -> None:
+        coro.close()  # type: ignore[attr-defined]  # don't leak the coroutine
+        raise RuntimeError("no running loop")
+
+    with patch(
+        "guard_core.handlers.cloud_handler.asyncio.create_task", side_effect=_reject
+    ):
+        with caplog.at_level(logging.ERROR, logger="guard_core.handlers.cloud"):
+            started = await cloud_handler.schedule_refresh({"AWS"})
+
+    assert started is False
+    assert "Could not schedule cloud IP refresh" in caplog.text
+    # The in-flight flag must be reset so a later call can retry.
+    assert cloud_handler._refresh_in_flight is False
