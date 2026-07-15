@@ -1,3 +1,4 @@
+import logging
 from typing import Any, cast
 
 from guard_core.decorators import RouteConfig, SecurityDecorator
@@ -56,15 +57,22 @@ def _mute_pydantic_plugin_instrumentation() -> None:
     """
     try:
         from guard_agent.models import EventBatch, SecurityEvent, SecurityMetric
-    except ImportError:  # agent extra not installed
+    except ImportError:
         return
-    for model in (SecurityEvent, SecurityMetric, EventBatch):
-        plugin_settings = cast(
-            "dict[str, Any]",
-            model.model_config.setdefault("plugin_settings", {}),
+    try:
+        for model in (SecurityEvent, SecurityMetric, EventBatch):
+            plugin_settings = cast(
+                "dict[str, Any]",
+                model.model_config.setdefault("plugin_settings", {}),
+            )
+            plugin_settings["logfire"] = {"record": "off"}
+            model.model_rebuild(force=True)
+    except Exception:
+        logging.getLogger("guard_core").warning(
+            "Could not opt guard-agent telemetry models out of pydantic "
+            "plugin instrumentation",
+            exc_info=True,
         )
-        plugin_settings["logfire"] = {"record": "off"}
-        model.model_rebuild(force=True)
 
 
 _mute_pydantic_plugin_instrumentation()
