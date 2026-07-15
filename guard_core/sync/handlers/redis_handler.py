@@ -7,7 +7,8 @@ from typing import Any
 
 from redis import Redis
 from redis.backoff import ExponentialBackoff
-from redis.exceptions import ConnectionError, TimeoutError
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from redis.retry import Retry
 
 from guard_core.exceptions import GuardRedisError
@@ -73,7 +74,7 @@ class RedisManager:
             kwargs["max_connections"] = self.config.redis_max_connections
         if self.config.redis_retries > 0:
             kwargs["retry"] = Retry(ExponentialBackoff(), self.config.redis_retries)
-            kwargs["retry_on_error"] = [ConnectionError, TimeoutError]
+            kwargs["retry_on_error"] = [RedisConnectionError, RedisTimeoutError]
         return kwargs
 
     def initialize(self) -> None:
@@ -156,7 +157,7 @@ class RedisManager:
                 raise GuardRedisError(503, "Redis connection failed")
 
             yield self._redis
-        except (ConnectionError, AttributeError) as e:
+        except (RedisConnectionError, AttributeError) as e:
             self.logger.error(f"Redis operation failed: {str(e)}")
 
             self._send_redis_event(

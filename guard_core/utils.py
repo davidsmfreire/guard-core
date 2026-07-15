@@ -360,7 +360,7 @@ def _has_country_rules(config: Any) -> bool:
 
 
 def _log_country_check_result(
-    ip: str, country: str | None, result_type: str, config: Any = None
+    ip: str, country: str | None, result_type: str, config: Any
 ) -> None:
     if result_type == "no_rules":
         logger.debug(
@@ -374,19 +374,22 @@ def _log_country_check_result(
             f"IP from blocked country {ip} - {country} - IP from blocked country"
         )
     elif result_type in ("whitelisted", "not_affected"):
-        level = getattr(config, "log_country_check_level", "INFO")
+        level = config.log_country_check_level
         if level is None:
             return
-        log = getattr(logger, level.lower())
         if result_type == "whitelisted":
-            log(
+            _log_at_level(
+                logger,
+                level,
                 f"IP from whitelisted country {ip} - {country} - "
-                "IP from whitelisted country"
+                "IP from whitelisted country",
             )
         else:
-            log(
+            _log_at_level(
+                logger,
+                level,
                 f"IP not from blocked or whitelisted country {ip} - {country} - "
-                "IP not from blocked or whitelisted country"
+                "IP not from blocked or whitelisted country",
             )
 
 
@@ -407,7 +410,7 @@ async def check_ip_country(
 ) -> bool:
     if not _has_country_rules(config):
         ip = _extract_ip_from_request(request)
-        _log_country_check_result(ip, None, "no_rules")
+        _log_country_check_result(ip, None, "no_rules", config)
         return False
 
     if not geo_ip_handler.is_initialized:
@@ -417,7 +420,7 @@ async def check_ip_country(
     country = geo_ip_handler.get_country(ip)
 
     if not country:
-        _log_country_check_result(ip, None, "no_geolocation")
+        _log_country_check_result(ip, None, "no_geolocation", config)
         return False
 
     is_blocked, result_type = _evaluate_country_access(country, config)
@@ -611,8 +614,8 @@ async def _check_request_component(
     component_name: str,
     client_ip: str,
     correlation_id: str,
-    enabled_categories: set[str] | None = None,
-    log_level: str | None = "WARNING",
+    enabled_categories: set[str] | None,
+    log_level: str | None,
 ) -> tuple[bool, str, list[dict]]:
     detected, trigger, threats = await _check_value_enhanced(
         value, context, client_ip, correlation_id, enabled_categories
@@ -711,7 +714,7 @@ async def _scan_query_params(
     enabled_categories: set[str] | None,
     client_ip: str,
     correlation_id: str,
-    log_level: str | None = "WARNING",
+    log_level: str | None,
 ) -> tuple[bool, str, list[dict]]:
     for key, value in request.query_params.items():
         if key.lower() in excluded_params:
@@ -736,7 +739,7 @@ async def _scan_headers(
     enabled_categories: set[str] | None,
     client_ip: str,
     correlation_id: str,
-    log_level: str | None = "WARNING",
+    log_level: str | None,
 ) -> tuple[bool, str, list[dict]]:
     for key, value in request.headers.items():
         if key.lower() in excluded_headers:
@@ -761,7 +764,7 @@ async def _scan_body_field(
     enabled_categories: set[str] | None,
     client_ip: str,
     correlation_id: str,
-    log_level: str | None = "WARNING",
+    log_level: str | None,
 ) -> tuple[bool, str, list[dict]]:
     detected, trigger, threats = await _check_request_component(
         value,
@@ -782,7 +785,7 @@ async def _scan_blob_body(
     enabled_categories: set[str] | None,
     client_ip: str,
     correlation_id: str,
-    log_level: str | None = "WARNING",
+    log_level: str | None,
 ) -> tuple[bool, str, list[dict]]:
     detected, trigger, threats = await _check_request_component(
         raw_body,
@@ -805,7 +808,7 @@ async def _scan_json_value(
     enabled_categories: set[str] | None,
     client_ip: str,
     correlation_id: str,
-    log_level: str | None = "WARNING",
+    log_level: str | None,
 ) -> tuple[bool, str, list[dict]]:
     if isinstance(value, dict):
         for key, item in value.items():
@@ -848,7 +851,7 @@ async def _scan_form_body(
     enabled_categories: set[str] | None,
     client_ip: str,
     correlation_id: str,
-    log_level: str | None = "WARNING",
+    log_level: str | None,
 ) -> tuple[bool, str, list[dict]]:
     from urllib.parse import parse_qsl
 
@@ -892,7 +895,7 @@ async def _scan_multipart_body(
     enabled_categories: set[str] | None,
     client_ip: str,
     correlation_id: str,
-    log_level: str | None = "WARNING",
+    log_level: str | None,
 ) -> tuple[bool, str, list[dict]]:
     parts = _multipart_text_parts(raw_body, content_type)
     if parts is None:
@@ -917,7 +920,7 @@ async def _scan_request_body(
     enabled_categories: set[str] | None,
     client_ip: str,
     correlation_id: str,
-    log_level: str | None = "WARNING",
+    log_level: str | None,
 ) -> tuple[bool, str, list[dict]]:
     import json
 

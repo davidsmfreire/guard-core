@@ -89,7 +89,7 @@ def test_no_geolocation_logs_at_debug(caplog: pytest.LogCaptureFixture) -> None:
     from guard_core.utils import _log_country_check_result
 
     caplog.set_level(logging.DEBUG, logger="guard_core")
-    _log_country_check_result("192.168.1.1", None, "no_geolocation")
+    _log_country_check_result("192.168.1.1", None, "no_geolocation", MagicMock())
 
     geo_records = [r for r in caplog.records if "not geolocated" in r.message]
     assert geo_records
@@ -100,7 +100,7 @@ def test_no_rules_logs_at_debug(caplog: pytest.LogCaptureFixture) -> None:
     from guard_core.utils import _log_country_check_result
 
     caplog.set_level(logging.DEBUG, logger="guard_core")
-    _log_country_check_result("192.168.1.1", None, "no_rules")
+    _log_country_check_result("192.168.1.1", None, "no_rules", MagicMock())
 
     no_rules = [r for r in caplog.records if "No countries blocked" in r.message]
     assert no_rules
@@ -110,10 +110,11 @@ def test_no_rules_logs_at_debug(caplog: pytest.LogCaptureFixture) -> None:
 def test_country_verdict_logs_at_info_by_default(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    from guard_core.models import SecurityConfig
     from guard_core.utils import _log_country_check_result
 
     caplog.set_level(logging.DEBUG, logger="guard_core")
-    _log_country_check_result("1.2.3.4", "PL", "not_affected")
+    _log_country_check_result("1.2.3.4", "PL", "not_affected", SecurityConfig())
 
     records = [
         r for r in caplog.records if "not from blocked or whitelisted" in r.message
@@ -179,7 +180,9 @@ async def test_attack_detected_log_respects_level(
 ) -> None:
     from guard_core import utils
 
-    async def fake_enhanced(*args, **kwargs):
+    async def fake_enhanced(
+        *args: object, **kwargs: object
+    ) -> tuple[bool, str, list[dict]]:
         return True, "trigger", [{"type": "regex", "category": "sqli"}]
 
     monkeypatch.setattr(utils, "_check_value_enhanced", fake_enhanced)
@@ -199,7 +202,9 @@ async def test_attack_detected_log_silenced_when_level_none(
 ) -> None:
     from guard_core import utils
 
-    async def fake_enhanced(*args, **kwargs):
+    async def fake_enhanced(
+        *args: object, **kwargs: object
+    ) -> tuple[bool, str, list[dict]]:
         return True, "trigger", [{"type": "regex", "category": "sqli"}]
 
     monkeypatch.setattr(utils, "_check_value_enhanced", fake_enhanced)
