@@ -288,12 +288,12 @@ Redis
 | `enable_redis`                   | `bool`        | `True`                    | Master switch for Redis.                                |
 | `redis_url`                      | `str \| None` | `"redis://localhost:6379"`| Redis connection URL.                                   |
 | `redis_prefix`                   | `str`         | `"guard_core:"`           | Key prefix for namespace isolation.                      |
-| `redis_socket_connect_timeout`   | `float \| None`| `2.0`                    | Seconds to wait establishing a TCP connection. `None` disables (blocks indefinitely on a partitioned Redis). |
-| `redis_socket_timeout`           | `float \| None`| `2.0`                    | Seconds to wait on a read/write before raising. `None` means no timeout. |
+| `redis_socket_connect_timeout`   | `float \| None`| `2.0`                    | Seconds to wait establishing a TCP connection. Must be positive; `None` disables (blocks indefinitely on a partitioned Redis). |
+| `redis_socket_timeout`           | `float \| None`| `2.0`                    | Seconds to wait on a read/write before raising. Must be positive; `None` means no timeout. |
 | `redis_health_check_interval`    | `int`         | `30`                      | Seconds between pooled-connection health checks. `0` disables. |
 | `redis_max_connections`          | `int \| None` | `None`                    | Cap on the connection pool size. `None` uses redis-py's default. |
 | `redis_retries`                  | `int`         | `1`                       | Retries (with exponential backoff) on transient connection/timeout errors. `0` disables. |
-| `redis_fail_open`                | `bool`        | `True`                    | On Redis outage, skip the failing check and let the request through instead of honoring `fail_secure`. Set `False` to treat Redis outages as `fail_secure` does. |
+| `redis_fail_open`                | `bool`        | `False`                   | On Redis outage, `fail_secure` governs by default. Set `True` to skip the failing check and let the request through, treating Redis outages as an availability concern distinct from other check failures. |
 
 ___
 

@@ -86,20 +86,24 @@ class SecurityConfig(BaseModel):
 
     redis_socket_connect_timeout: float | None = Field(
         default=2.0,
-        ge=0.0,
+        gt=0.0,
         description=(
             "Seconds to wait establishing a Redis TCP connection before giving up. "
-            "None disables the timeout (a partitioned/black-holed Redis then blocks "
-            "the request indefinitely), so a bounded default is strongly recommended."
+            "Must be positive: 0 would put the socket in non-blocking mode, not "
+            "disable the timeout. None disables the timeout (a partitioned/"
+            "black-holed Redis then blocks the request indefinitely), so a bounded "
+            "default is strongly recommended."
         ),
     )
 
     redis_socket_timeout: float | None = Field(
         default=2.0,
-        ge=0.0,
+        gt=0.0,
         description=(
-            "Seconds to wait on a Redis read/write before raising. None means no "
-            "timeout. Keep this low: every blocked Redis call blocks a request."
+            "Seconds to wait on a Redis read/write before raising. Must be "
+            "positive: 0 would put the socket in non-blocking mode, not disable "
+            "the timeout. None means no timeout. Keep this low: every blocked "
+            "Redis call blocks a request."
         ),
     )
 
