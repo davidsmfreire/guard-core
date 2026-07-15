@@ -19,13 +19,13 @@ class CloudIpRefreshCheck(SecurityCheck):
             time.time() - self.middleware.last_cloud_ip_refresh
             > self.config.cloud_ip_refresh_interval
         ):
-            # Bump the timestamp before scheduling so concurrent requests don't all
-            # trigger their own refresh, then fetch in the background rather than
-            # running it inline on the request path (a slow fetch would otherwise
-            # block request handling).
+            previous_refresh = self.middleware.last_cloud_ip_refresh
             self.middleware.last_cloud_ip_refresh = int(time.time())
-            cloud_handler.schedule_refresh(
+            scheduled = cloud_handler.schedule_refresh(
                 {str(provider) for provider in self.config.block_cloud_providers},
                 ttl=self.config.cloud_ip_refresh_interval,
+                refresh=self.middleware.refresh_cloud_ip_ranges,
             )
+            if not scheduled:
+                self.middleware.last_cloud_ip_refresh = previous_refresh
         return None

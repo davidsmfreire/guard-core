@@ -790,9 +790,8 @@ def test_cloud_ip_refresh_triggers() -> None:
         result = check.check(req)
 
     assert result is None
-    # Refresh is scheduled in the background, not awaited on the request path.
-    schedule.assert_called_once_with({"AWS"}, ttl=1)
-    assert mw.last_cloud_ip_refresh > 0  # debounced up front
+    schedule.assert_called_once_with({"AWS"}, ttl=1, refresh=mw.refresh_cloud_ip_ranges)
+    assert mw.last_cloud_ip_refresh > 0
     mw.refresh_cloud_ip_ranges.assert_not_called()
 
 

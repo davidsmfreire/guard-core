@@ -3,6 +3,7 @@ import ipaddress
 import logging
 import re
 import threading
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -293,7 +294,10 @@ class CloudManager:
         self._store = store
 
     def schedule_refresh(
-        self, providers: set[str] = _ALL_PROVIDERS, ttl: int = 3600
+        self,
+        providers: set[str] = _ALL_PROVIDERS,
+        ttl: int = 3600,
+        refresh: Callable[[], None] | None = None,
     ) -> bool:
         """Refresh cloud IP ranges in the background without blocking the caller.
 
@@ -302,12 +306,18 @@ class CloudManager:
         fires the refresh as a single-flight background task instead: while one is in
         flight, further calls are no-ops. The gate is lock-guarded so concurrent
         callers (multi-threaded sync deployments) can't start duplicate refreshes.
+        Passing ``refresh`` runs that callable as the background refresh instead of
+        this manager's own ``refresh_async`` — middleware callers use it to keep
+        adapter overrides of ``refresh_cloud_ip_ranges`` on the periodic path.
         Returns True if a task was started.
         """
 
         def _run_refresh() -> None:
             try:
-                self.refresh_async(providers, ttl=ttl)
+                if refresh is None:
+                    self.refresh_async(providers, ttl=ttl)
+                else:
+                    refresh()
             except Exception:
                 self.logger.exception("Background cloud IP refresh failed")
             finally:
